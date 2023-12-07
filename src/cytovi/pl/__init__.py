@@ -1,1 +1,3 @@
-from .basic import BasicClass, basic_plot
+from .cyto_pl import biaxial, histogram
+
+__all__ = ["histogram", "biaxial"]

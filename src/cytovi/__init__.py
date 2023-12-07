@@ -1,8 +1,9 @@
 from importlib.metadata import version
 
 from . import pl, pp, tl
-from .models import CytoVI
+from ._constants import REGISTRY_KEYS
+from ._model import CytoVI
 
-__all__ = ["pl", "pp", "tl", "CytoVI", "CytoVAE"]
+__all__ = ["pl", "pp", "tl", "CytoVI", "REGISTRY_KEYS"]
 
 __version__ = version("CytoVI")

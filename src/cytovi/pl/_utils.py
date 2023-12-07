@@ -1,0 +1,19 @@
+from anndata import AnnData
+
+
+def _check_marker(adata: AnnData, marker: list[str]):
+    for m in marker:
+        if m not in adata.var_names:
+            raise ValueError(f"Marker {m} not found in adata.var_names.")
+
+
+def _check_group_by(adata: AnnData, group_by: str):
+    if group_by is not None:
+        if group_by not in adata.obs:
+            raise ValueError(f"Group by {group_by} not found in adata.obs.")
+
+
+def _check_layer_key(adata: AnnData, layer_key: str):
+    if layer_key is not None:
+        if layer_key not in adata.layers:
+            raise ValueError(f"Layer key {layer_key} not found in adata.layers.")
