@@ -6,11 +6,18 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from anndata import AnnData
 
-from ._utils import _check_group_by, _check_layer_key, _check_marker
+from cytovi._utils import _check_group_by, _check_layer_key, _check_marker
+from cytovi.pp.cyto_pp import subsample
 
 
 def histogram(
-    adata: ad.AnnData, marker: Union[str, list[str]] = "all", group_by: str = None, layer_key: str = "raw", **kwargs
+    adata: ad.AnnData,
+    marker: Union[str, list[str]] = "all",
+    group_by: str = None,
+    layer_key: str = "raw",
+    downsample: bool = True,
+    n_obs: int = 10000,
+    **kwargs,
 ):
     """
     Create a FacetGrid of histograms for specified markers in AnnData.
@@ -53,6 +60,10 @@ def histogram(
     _check_group_by(adata, group_by)
     _check_layer_key(adata, layer_key)
 
+    # subsample if too many observations
+    if downsample and adata.n_obs > 10000:
+        adata = subsample(adata, n_obs=n_obs, group_by=group_by)
+
     num_plots = len(marker)
     plot_grid = math.ceil(math.sqrt(num_plots))
 
@@ -83,6 +94,8 @@ def biaxial(
     group_by: str = None,
     n_bins: int = 10,
     layer_key: str = "raw",
+    downsample: bool = True,
+    n_obs: int = 10000,
     **kwargs,
 ):
     """
@@ -133,6 +146,10 @@ def biaxial(
     _check_group_by(adata, group_by)
     _check_layer_key(adata, layer_key)
 
+    # subsample if too many observations
+    if downsample and adata.n_obs > 10000:
+        adata = subsample(adata, n_obs=n_obs, group_by=group_by)
+
     # remove marker from marker_x if it is also in marker_y
     if marker_x is not None and marker_y is not None:
         marker_x = list(set(marker_x) - set(marker_y))
@@ -149,7 +166,3 @@ def biaxial(
     g.map(sns.scatterplot, s=5)
     g.add_legend()
     plt.show()
-
-
-# to do: create a generic plotting class with save and show functions, inherit from this
-# to do:  subsampling if large adatas are loaded?
