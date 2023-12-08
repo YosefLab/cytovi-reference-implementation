@@ -7,7 +7,7 @@ from anndata import AnnData
 from scvi import settings
 from sklearn.preprocessing import MinMaxScaler
 
-from cytovi._utils import _check_layer_key, _check_marker
+from cytovi._utils import check_layer_key, check_marker
 
 
 def arcsinh(
@@ -36,9 +36,9 @@ def arcsinh(
         Optional[AnnData]: If inplace is False, returns the transformed AnnData object. Otherwise, returns None.
     """
     # check arguments
-    _check_layer_key(adata, raw_layer_key)
+    check_layer_key(adata, raw_layer_key)
     if scaling_dict is not None:
-        _check_marker(adata, scaling_dict.keys())
+        check_marker(adata, scaling_dict.keys())
 
     # combine scaling factors into one dict
     global_dict = {marker: global_scaling_factor for marker in adata.var_names}
@@ -86,7 +86,7 @@ def logp(
     -------
         Optional[AnnData]: If inplace is False, returns the normalized AnnData object. Otherwise, returns None.
     """
-    _check_layer_key(adata, raw_layer_key)
+    check_layer_key(adata, raw_layer_key)
     adata.layers[transformed_layer_key] = adata.layers[raw_layer_key].copy()
     adata.layers[transformed_layer_key] += offset
     adata.layers[transformed_layer_key] = np.log(adata.layers[transformed_layer_key])
@@ -117,7 +117,7 @@ def scale(
     -------
         Optional[AnnData]: If inplace is False, returns the scaled AnnData object. Otherwise, returns None.
     """
-    _check_layer_key(adata, transformed_layer_key)
+    check_layer_key(adata, transformed_layer_key)
     feature_range = (feature_range[0] + feat_eps, feature_range[1] - feat_eps)
     scaler = MinMaxScaler(feature_range=feature_range)
     adata.layers[scaled_layer_key] = scaler.fit_transform(adata.layers[transformed_layer_key].copy())
@@ -148,7 +148,7 @@ def register_nan_layer(
     -------
         Optional[AnnData]: If inplace is False, returns the processed AnnData object. Otherwise, returns None.
     """
-    _check_layer_key(adata, mask_layer_key)
+    check_layer_key(adata, mask_layer_key)
     # add mask layer and replace nans by zero
     adata.layers[mask_layer_key] = np.ones_like(adata.layers[scaled_layer_key])
     adata.layers[mask_layer_key][np.isnan(adata.layers[scaled_layer_key])] = 0
@@ -177,7 +177,7 @@ def merge_batches(
     """
     # check if there are NaNs before merging and validate layers
     for batch, adata_batch in enumerate(adata_list):
-        _check_layer_key(adata_batch, scaled_layer_key)
+        check_layer_key(adata_batch, scaled_layer_key)
         if np.isnan(adata_batch.layers[scaled_layer_key]).any():
             error_msg = "Nan values are present in batch {}. This will interfere with downstream processing."
             raise ValueError(error_msg.format(batch))
