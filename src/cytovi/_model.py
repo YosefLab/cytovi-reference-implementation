@@ -5,6 +5,7 @@ from typing import Literal, Optional, Union
 
 import numpy as np
 import pandas as pd
+import rich
 import torch
 from anndata import AnnData
 from scvi import settings
@@ -189,6 +190,14 @@ class CytoVI(
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
+
+    def __repr__(
+        self,
+    ):
+        summary_string = self._model_summary_string
+        summary_string += "\nTraining status: {}".format("Trained" if self.is_trained_ else "Not Trained")
+        rich.print(summary_string)
+        return ""
 
     # def train(
     #     self,
