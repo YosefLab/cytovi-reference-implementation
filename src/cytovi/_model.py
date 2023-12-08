@@ -102,7 +102,7 @@ class CytoVI(
         n_latent: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
-        protein_likelihood: Literal["normal", "beta", "truncnorm"] = "normal",
+        protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
         **model_kwargs,
     ):

@@ -11,7 +11,6 @@ from scvi.nn import Encoder, FCLayers
 from torch import logsumexp, nn
 from torch.distributions import Beta, Normal
 from torch.distributions import kl_divergence as kl
-from torchrl.modules import TruncatedNormal
 
 from ._constants import REGISTRY_KEYS
 
@@ -92,7 +91,7 @@ class CytoVAE(BaseModuleClass):
         n_cats_per_cov: Optional[Iterable[int]] = None,
         dropout_rate: Tunable[float] = 0.1,
         log_variational: bool = False,
-        protein_likelihood: Tunable[Literal["normal", "beta", "truncnorm"]] = "normal",
+        protein_likelihood: Tunable[Literal["normal", "beta"]] = "normal",
         latent_distribution: Tunable[Literal["normal", "ln"]] = "normal",
         encode_covariates: Tunable[bool] = False,
         deeply_inject_covariates: Tunable[bool] = True,
@@ -262,8 +261,6 @@ class CytoVAE(BaseModuleClass):
             px = Normal(loc=px_param1, scale=px_param2)
         elif self.protein_likelihood == "beta":
             px = Beta(concentration1=px_param1, concentration0=px_param2)
-        elif self.protein_likelihood == "truncnorm":
-            px = TruncatedNormal(loc=px_param1, scale=px_param2, upscale=torch.tensor([100]), tanh_loc=True)
 
         pz = Normal(torch.zeros_like(z), torch.ones_like(z))
         return {
@@ -424,7 +421,7 @@ class DecoderFlowVI(nn.Module):
         use_batch_norm: bool = False,
         use_layer_norm: bool = False,
         scale_activation: Literal["softplus", None] = None,
-        protein_likelihood: [Literal["normal", "beta", "truncnorm"]] = "normal",
+        protein_likelihood: [Literal["normal", "beta"]] = "normal",
         decoder_param_eps: float = 1e-6,
     ):
         super().__init__()
@@ -492,7 +489,7 @@ class DecoderFlowVI(nn.Module):
         px_param1 = self.px_param1_decoder(px)
         px_param2 = self.px_param2_decoder(px)
 
-        if self.protein_likelihood == "normal" or self.protein_likelihood == "truncnorm":
+        if self.protein_likelihood == "normal":
             px_param2 = F.softplus(px_param2) + self.decoder_param_eps
 
         elif self.protein_likelihood == "beta":
