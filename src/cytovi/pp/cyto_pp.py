@@ -231,10 +231,14 @@ def subsample(
     -------
         Optional[AnnData]: If inplace is False, returns the downsampled AnnData object. Otherwise, returns None.
     """
+    if len(adata.obs.index) != len(set(adata.obs.index)):
+        msg = "Observations are not unique. Cannot subsample. Call `.obs_names_make_unique` before."
+        raise ValueError(msg)
+
     if group_by is not None:
         if group_by not in adata.obs:
             raise ValueError(f"Group {group_by} not found in adata.obs.")
-        group_cats = adata.obs["cell_type"].drop_duplicates().values
+        group_cats = adata.obs[group_by].drop_duplicates().values
         n_obs_group = n_obs // len(group_cats)
 
         if not replace:
