@@ -52,11 +52,11 @@ def arcsinh(
     adata.layers[transformed_layer_key] = np.arcsinh(transformed_layer)
 
     if not transform_scatter:
-        scatter_prefix = ("FSC", "fsc", "SSC", "ssc")
+        scatter_prefix = ("FSC", "Fsc", "fsc", "SSC", "Ssc", "ssc")
         is_scatter = [marker.startswith(scatter_prefix) for marker in adata.var_names]
 
         if any(is_scatter):
-            scatter_str = " ,".join(adata.var_names[is_scatter])
+            scatter_str = ", ".join(adata.var_names[is_scatter])
             msg = f"Detected scatter features, which are omited for transformation. \nScatter features: {scatter_str}"
             warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 
