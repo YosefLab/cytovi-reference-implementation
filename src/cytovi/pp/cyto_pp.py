@@ -52,7 +52,7 @@ def arcsinh(
     adata.layers[transformed_layer_key] = np.arcsinh(transformed_layer)
 
     if not transform_scatter:
-        scatter_prefix = ("FSC", "Fsc", "fsc", "SSC", "Ssc", "ssc")
+        scatter_prefix = ("FSC", "Fsc", "fsc", "SSC", "Ssc", "ssc")  # turn this into a constant
         is_scatter = [marker.startswith(scatter_prefix) for marker in adata.var_names]
 
         if any(is_scatter):
@@ -70,6 +70,7 @@ def logp(
     raw_layer_key: str = "raw",
     transformed_layer_key: str = "transformed",
     offset: float = 1.0,
+    transform_scatter: bool = False,
     inplace: bool = True,
 ) -> Optional[AnnData]:
     """
@@ -90,6 +91,17 @@ def logp(
     adata.layers[transformed_layer_key] = adata.layers[raw_layer_key].copy()
     adata.layers[transformed_layer_key] += offset
     adata.layers[transformed_layer_key] = np.log(adata.layers[transformed_layer_key])
+
+    if not transform_scatter:
+        scatter_prefix = ("FSC", "Fsc", "fsc", "SSC", "Ssc", "ssc")  # turn this into a constant
+        is_scatter = [marker.startswith(scatter_prefix) for marker in adata.var_names]
+
+        if any(is_scatter):
+            scatter_str = ", ".join(adata.var_names[is_scatter])
+            msg = f"Detected scatter features, which are omited for transformation. \nScatter features: {scatter_str}"
+            warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+
+            adata.layers[transformed_layer_key][:, is_scatter] = adata.layers[raw_layer_key][:, is_scatter]
 
     return adata if not inplace else None
 
