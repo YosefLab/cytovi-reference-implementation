@@ -160,7 +160,7 @@ def register_nan_layer(
     -------
         Optional[AnnData]: If inplace is False, returns the processed AnnData object. Otherwise, returns None.
     """
-    check_layer_key(adata, mask_layer_key)
+    check_layer_key(adata, scaled_layer_key)
     # add mask layer and replace nans by zero
     adata.layers[mask_layer_key] = np.ones_like(adata.layers[scaled_layer_key])
     adata.layers[mask_layer_key][np.isnan(adata.layers[scaled_layer_key])] = 0
