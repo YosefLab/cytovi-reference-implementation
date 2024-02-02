@@ -17,6 +17,7 @@ def histogram(
     layer_key: str = "raw",
     downsample: bool = True,
     n_obs: int = 10000,
+    col_wrap=None,
     **kwargs,
 ):
     """
@@ -65,7 +66,9 @@ def histogram(
         adata = subsample(adata, n_obs=n_obs, group_by=group_by)
 
     num_plots = len(marker)
-    plot_grid = math.ceil(math.sqrt(num_plots))
+
+    if col_wrap is None:
+        col_wrap = math.ceil(math.sqrt(num_plots))
 
     data_plot = adata[:, marker].to_df(layer=layer_key)
 
@@ -76,7 +79,7 @@ def histogram(
 
     # generate the plot
     g = sns.FacetGrid(
-        data_plot_melt, col="variable", hue=group_by, col_wrap=plot_grid, sharey=False, sharex=False, **kwargs
+        data_plot_melt, col="variable", hue=group_by, col_wrap=col_wrap, sharey=False, sharex=False, **kwargs
     )
     g.map(sns.kdeplot, "value", fill=True)
     g.set_titles("{col_name}")
