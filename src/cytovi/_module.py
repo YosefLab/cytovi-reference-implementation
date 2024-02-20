@@ -5,7 +5,7 @@ from typing import Callable, Literal, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scvi.autotune._types import Tunable
+from scvi._types import Tunable
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import Encoder, FCLayers
 from torch import logsumexp, nn
