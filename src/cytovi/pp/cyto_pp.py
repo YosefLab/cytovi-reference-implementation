@@ -134,8 +134,8 @@ def scale(
     scaler = MinMaxScaler(feature_range=feature_range)
     adata.layers[scaled_layer_key] = scaler.fit_transform(adata.layers[transformed_layer_key].copy())
 
-    scaler_params = {"feature_range": scaler.feature_range, "scale_": scaler.scale_, "min_": scaler.min_}
-    adata.uns["scaler_params"] = scaler_params
+    # scaler_params = {"feature_range": scaler.feature_range, "scale_": scaler.scale_, "min_": scaler.min_}
+    # adata.uns["scaler_params"] = scaler_params # this should be added to adata.uns but needs a fix with adata saving issues
 
     return adata if not inplace else None
 
