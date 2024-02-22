@@ -13,7 +13,7 @@ from cytovi.pp.cyto_pp import subsample
 def histogram(
     adata: ad.AnnData,
     marker: Union[str, list[str]] = "all",
-    group_by: str = None,
+    groupby: str = None,
     layer_key: str = "raw",
     downsample: bool = True,
     n_obs: int = 10000,
@@ -58,12 +58,12 @@ def histogram(
         marker = [marker]
 
     check_marker(adata, marker)
-    check_group_by(adata, group_by)
+    check_group_by(adata, groupby)
     check_layer_key(adata, layer_key)
 
     # subsample if too many observations
     if downsample and adata.n_obs > 10000:
-        adata = subsample(adata, n_obs=n_obs, group_by=group_by)
+        adata = subsample(adata, n_obs=n_obs, groupby=groupby)
 
     num_plots = len(marker)
 
@@ -72,14 +72,14 @@ def histogram(
 
     data_plot = adata[:, marker].to_df(layer=layer_key)
 
-    if group_by is not None:
-        data_plot[group_by] = adata.obs[group_by]
+    if groupby is not None:
+        data_plot[groupby] = adata.obs[groupby]
 
-    data_plot_melt = data_plot.melt(id_vars=group_by)
+    data_plot_melt = data_plot.melt(id_vars=groupby)
 
     # generate the plot
     g = sns.FacetGrid(
-        data_plot_melt, col="variable", hue=group_by, col_wrap=col_wrap, sharey=False, sharex=False, **kwargs
+        data_plot_melt, col="variable", hue=groupby, col_wrap=col_wrap, sharey=False, sharex=False, **kwargs
     )
     g.map(sns.kdeplot, "value", fill=True)
     g.set_titles("{col_name}")
@@ -94,7 +94,7 @@ def biaxial(
     adata: AnnData,
     marker_x: Union[str, list[str]] = None,
     marker_y: Union[str, list[str]] = None,
-    group_by: str = None,
+    groupby: str = None,
     n_bins: int = 10,
     layer_key: str = "raw",
     downsample: bool = True,
@@ -146,12 +146,12 @@ def biaxial(
 
     check_marker(adata, marker_x)
     check_marker(adata, marker_y)
-    check_group_by(adata, group_by)
+    check_group_by(adata, groupby)
     check_layer_key(adata, layer_key)
 
     # subsample if too many observations
     if downsample and adata.n_obs > 10000:
-        adata = subsample(adata, n_obs=n_obs, group_by=group_by)
+        adata = subsample(adata, n_obs=n_obs, groupby=groupby)
 
     # remove marker from marker_x if it is also in marker_y
     if marker_x is not None and marker_y is not None:
@@ -161,10 +161,10 @@ def biaxial(
 
     data_plot = adata[:, marker].to_df(layer=layer_key)
 
-    if group_by is not None:
-        data_plot[group_by] = adata.obs[group_by]
+    if groupby is not None:
+        data_plot[groupby] = adata.obs[groupby]
 
-    g = sns.PairGrid(data_plot, x_vars=marker_x, y_vars=marker_y, hue=group_by, **kwargs)
+    g = sns.PairGrid(data_plot, x_vars=marker_x, y_vars=marker_y, hue=groupby, **kwargs)
     g.map(sns.kdeplot, levels=n_bins)
     g.map(sns.scatterplot, s=5)
     g.add_legend()

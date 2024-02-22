@@ -227,7 +227,7 @@ def merge_batches(
 
 
 def subsample(
-    adata: AnnData, n_obs: int = 10000, random_state: int = 0, replace: bool = False, group_by: str = None
+    adata: AnnData, n_obs: int = 10000, random_state: int = 0, replace: bool = False, groupby: str = None
 ) -> Optional[AnnData]:
     """
     Subsample an AnnData object.
@@ -247,22 +247,22 @@ def subsample(
         msg = "Observations are not unique. Cannot subsample. Call `.obs_names_make_unique` before."
         raise ValueError(msg)
 
-    if group_by is not None:
-        if group_by not in adata.obs:
-            raise ValueError(f"Group {group_by} not found in adata.obs.")
-        group_cats = adata.obs[group_by].drop_duplicates().values
+    if groupby is not None:
+        if groupby not in adata.obs:
+            raise ValueError(f"Group {groupby} not found in adata.obs.")
+        group_cats = adata.obs[groupby].drop_duplicates().values
         n_obs_group = n_obs // len(group_cats)
 
         if not replace:
             for group in group_cats:
-                if len(adata.obs[adata.obs[group_by] == group]) < n_obs_group:
+                if len(adata.obs[adata.obs[groupby] == group]) < n_obs_group:
                     msg = (
                         f"Group {group} has less observations than {n_obs_group} observations."
                         + "Taking all group observations. Set replace to True to sample with replacement."
                     )
                     warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 
-        index = adata.obs.groupby(group_by, as_index=False).apply(
+        index = adata.obs.groupby(groupby, as_index=False).apply(
             lambda x: x.sample(n_obs_group, random_state=random_state, replace=replace) if len(x) > n_obs_group else x
         )
         index = index.reset_index()["level_1"].to_list()
