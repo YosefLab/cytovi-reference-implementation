@@ -4,14 +4,13 @@ import numpy as np
 import pandas as pd
 from anndata import AnnData
 from scipy.stats import pearsonr, spearmanr
-from scvi.model.base import BaseModelClass
-from scvi_criticism import PPC
-from scvi_criticism._constants import (
+from scvi.criticism._constants import (
     DATA_VAR_RAW,
     METRIC_CV_CELL,
     METRIC_CV_GENE,
 )
-from scvi_criticism._ppc import _make_dataset_dense
+from scvi.criticism._ppc import PosteriorPredictiveCheck, _make_dataset_dense
+from scvi.model.base import BaseModelClass
 from sklearn.metrics import mean_absolute_error as mae
 
 Dims = Literal["cells", "features"]
@@ -21,7 +20,7 @@ METRIC_STD_CELL = "std_cell"
 METRIC_STD_GENE = "std_gene"
 
 
-class PPC(PPC):
+class PosteriorPredictiveCheck(PosteriorPredictiveCheck):
     """
     Posterior predictive checks for CytoVI models.
 
