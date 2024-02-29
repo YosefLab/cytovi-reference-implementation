@@ -203,7 +203,7 @@ def merge_batches(
         backbone_str = ", ".join(backbone_markers)
 
         msg = (
-            "Not all proteins are detected across all batches. Will generate nan_layer"
+            "Not all proteins are detected across all batches. Will generate nan_layer "
             + f"for imputation of missing proteins. \nBackbone markers: {backbone_str}"
         )
         warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)

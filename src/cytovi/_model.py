@@ -131,6 +131,7 @@ class CytoVI(
             **model_kwargs,
         )
 
+
         self._model_summary_string = (
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
             "{}, protein_likelihood: {}, latent_distribution: {}, n_proteins: {}"
@@ -143,6 +144,21 @@ class CytoVI(
             latent_distribution,
             self.summary_stats.n_vars,
         )
+
+
+        if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
+            nan_layer = self.adata_manager.get_from_registry("nan_layer")
+            all_markers = adata.var_names
+            backbone_markers = list(all_markers[~np.any(nan_layer == 0, axis=0)])
+            self.backbone_markers = backbone_markers
+            self.nan_imputation = True
+            backbone_str = ", ".join(backbone_markers)
+            self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}, \nBackbone markers: {backbone_str}")
+        else:
+            self.backbone_markers = None
+            self.nan_imputation = False
+            self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}")
+
         self.init_params_ = self._get_init_params(locals())
 
     @classmethod
@@ -436,15 +452,14 @@ class CytoVI(
         adata = self._validate_anndata(adata)
         all_batches = list(np.unique(self.adata_manager.get_from_registry("batch")))
 
-        if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
+        if self.nan_imputation is True:
             msg = "detected missing proteins between batches - will impute missing markers"
             warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
-            nan_imputation = True
 
-            nan_layer = self.adata_manager.get_from_registry("nan_layer")
             all_markers = adata.var_names
-            backbone_markers = list(all_markers[~np.any(nan_layer == 0, axis=0)])
+            backbone_markers = self.backbone_markers
             backbone_marker_mask = all_markers.isin(backbone_markers)
+            nan_imputation = True
 
         else:
             nan_imputation = False
