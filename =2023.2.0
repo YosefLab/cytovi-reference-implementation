@@ -1,0 +1,13 @@
+Collecting xarray
+  Downloading xarray-2024.2.0-py3-none-any.whl.metadata (11 kB)
+Requirement already satisfied: numpy>=1.23 in /home/labs/amit/floriani/mambaforge/envs/cytovi/lib/python3.9/site-packages (from xarray) (1.26.4)
+Requirement already satisfied: packaging>=22 in /home/labs/amit/floriani/mambaforge/envs/cytovi/lib/python3.9/site-packages (from xarray) (23.2)
+Requirement already satisfied: pandas>=1.5 in /home/labs/amit/floriani/mambaforge/envs/cytovi/lib/python3.9/site-packages (from xarray) (2.2.0)
+Requirement already satisfied: python-dateutil>=2.8.2 in /home/labs/amit/floriani/mambaforge/envs/cytovi/lib/python3.9/site-packages (from pandas>=1.5->xarray) (2.8.2)
+Requirement already satisfied: pytz>=2020.1 in /home/labs/amit/floriani/mambaforge/envs/cytovi/lib/python3.9/site-packages (from pandas>=1.5->xarray) (2024.1)
+Requirement already satisfied: tzdata>=2022.7 in /home/labs/amit/floriani/mambaforge/envs/cytovi/lib/python3.9/site-packages (from pandas>=1.5->xarray) (2024.1)
+Requirement already satisfied: six>=1.5 in /home/labs/amit/floriani/mambaforge/envs/cytovi/lib/python3.9/site-packages (from python-dateutil>=2.8.2->pandas>=1.5->xarray) (1.16.0)
+Downloading xarray-2024.2.0-py3-none-any.whl (1.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.1/1.1 MB 3.6 MB/s eta 0:00:00
+Installing collected packages: xarray
+Successfully installed xarray-2024.2.0
