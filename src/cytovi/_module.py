@@ -140,7 +140,7 @@ class CytoVAE(BaseModuleClass):
         # decoder goes from n_latent-dimensional space to n_input-d data
         n_input_decoder = n_latent + n_continuous_cov
         _extra_decoder_kwargs = extra_decoder_kwargs or {}
-        self.decoder = DecoderFlowVI(
+        self.decoder = DecoderCytoVI(
             n_input_decoder,
             n_input,
             n_cat_list=cat_list,
@@ -379,7 +379,7 @@ class CytoVAE(BaseModuleClass):
 
 
 # Decoder
-class DecoderFlowVI(nn.Module):
+class DecoderCytoVI(nn.Module):
     """Decodes data from latent space of ``n_input`` dimensions into ``n_output`` dimensions.
 
     Uses a fully-connected neural network of ``n_hidden`` layers.
