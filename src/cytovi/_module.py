@@ -98,8 +98,11 @@ class CytoVAE(BaseModuleClass):
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
         use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
         var_activation: Optional[Callable] = None,
+        encode_backbone_only: Optional[bool] = False,
+        backbone_marker_mask: Optional[list] = None,
         extra_encoder_kwargs: Optional[dict] = None,
         extra_decoder_kwargs: Optional[dict] = None,
+
     ):
         super().__init__()
         self.n_latent = n_latent
@@ -109,6 +112,8 @@ class CytoVAE(BaseModuleClass):
         self.n_labels = n_labels
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
+        self.encode_backbone_only = encode_backbone_only
+        self.backbone_marker_mask = backbone_marker_mask
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -117,7 +122,11 @@ class CytoVAE(BaseModuleClass):
 
         # z encoder goes from the n_input-dimensional data to an n_latent-d
         # latent space representation
-        n_input_encoder = n_input + n_continuous_cov * encode_covariates
+        if encode_backbone_only is True:
+            n_input_encoder = backbone_marker_mask.sum() + n_continuous_cov * encode_covariates
+        else:
+            n_input_encoder = n_input + n_continuous_cov * encode_covariates
+
         cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
         encoder_cat_list = cat_list if encode_covariates else None
         _extra_encoder_kwargs = extra_encoder_kwargs or {}
@@ -167,8 +176,13 @@ class CytoVAE(BaseModuleClass):
         cat_covs = tensors[cat_key] if cat_key in tensors.keys() else None
 
         x = tensors[REGISTRY_KEYS.X_KEY]
+
+        if self.encode_backbone_only is True:
+            x_ = x[..., self.backbone_marker_mask]
+        else:
+            x_ = x
         input_dict = {
-            "x": x,
+            "x": x_,
             "batch_index": batch_index,
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,

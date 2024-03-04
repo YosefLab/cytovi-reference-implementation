@@ -105,6 +105,7 @@ class CytoVI(
         dropout_rate: float = 0.1,
         protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
+        encode_backbone_only: bool = False,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -115,21 +116,6 @@ class CytoVI(
             else None
         )
         n_batch = self.summary_stats.n_batch
-
-        self.module = self._module_cls(
-            n_input=self.summary_stats.n_vars,
-            n_batch=n_batch,
-            n_labels=self.summary_stats.n_labels,
-            n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
-            n_cats_per_cov=n_cats_per_cov,
-            n_hidden=n_hidden,
-            n_latent=n_latent,
-            n_layers=n_layers,
-            dropout_rate=dropout_rate,
-            protein_likelihood=protein_likelihood,
-            latent_distribution=latent_distribution,
-            **model_kwargs,
-        )
 
 
         self._model_summary_string = (
@@ -145,19 +131,38 @@ class CytoVI(
             self.summary_stats.n_vars,
         )
 
-
         if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
             nan_layer = self.adata_manager.get_from_registry("nan_layer")
             all_markers = adata.var_names
             backbone_markers = list(all_markers[~np.any(nan_layer == 0, axis=0)])
             self.backbone_markers = backbone_markers
             self.nan_imputation = True
+            self.backbone_marker_mask = all_markers.isin(backbone_markers)
             backbone_str = ", ".join(backbone_markers)
             self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}, \nBackbone markers: {backbone_str}")
         else:
             self.backbone_markers = None
+            self.backbone_marker_mask = None
             self.nan_imputation = False
             self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}")
+
+        self.module = self._module_cls(
+            n_input=self.summary_stats.n_vars,
+            n_batch=n_batch,
+            n_labels=self.summary_stats.n_labels,
+            n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
+            n_cats_per_cov=n_cats_per_cov,
+            n_hidden=n_hidden,
+            n_latent=n_latent,
+            n_layers=n_layers,
+            dropout_rate=dropout_rate,
+            protein_likelihood=protein_likelihood,
+            latent_distribution=latent_distribution,
+            encode_backbone_only=encode_backbone_only,
+            backbone_marker_mask=self.backbone_marker_mask,
+            **model_kwargs,
+        )
+
 
         self.init_params_ = self._get_init_params(locals())
 
@@ -455,10 +460,7 @@ class CytoVI(
         if self.nan_imputation is True:
             msg = "detected missing proteins between batches - will impute missing markers"
             warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
-
-            all_markers = adata.var_names
-            backbone_markers = self.backbone_markers
-            backbone_marker_mask = all_markers.isin(backbone_markers)
+            backbone_marker_mask=self.backbone_marker_mask
             nan_imputation = True
 
         else:
