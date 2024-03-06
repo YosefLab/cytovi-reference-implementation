@@ -102,6 +102,7 @@ class CytoVAE(BaseModuleClass):
         backbone_marker_mask: Optional[list] = None,
         extra_encoder_kwargs: Optional[dict] = None,
         extra_decoder_kwargs: Optional[dict] = None,
+        scale_activation: Optional[Literal["softplus", None]] = None,
 
     ):
         super().__init__()
@@ -158,7 +159,7 @@ class CytoVAE(BaseModuleClass):
             inject_covariates=deeply_inject_covariates,
             use_batch_norm=use_batch_norm_decoder,
             use_layer_norm=use_layer_norm_decoder,
-            scale_activation=None,
+            scale_activation=scale_activation,
             protein_likelihood=protein_likelihood,
             **_extra_decoder_kwargs,
         )
