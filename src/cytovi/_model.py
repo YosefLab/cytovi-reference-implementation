@@ -22,6 +22,7 @@ from scvi.model._utils import _get_batch_code_from_category
 from scvi.model.base import ArchesMixin, BaseModelClass, RNASeqMixin, UnsupervisedTrainingMixin, VAEMixin
 from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.utils import setup_anndata_dsp
+from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import CytoVAE
@@ -220,22 +221,23 @@ class CytoVI(
         rich.print(summary_string)
         return ""
 
+    @devices_dsp.dedent
     def train(
         self,
         max_epochs: Optional[int] = None,
         lr: float = 1e-3,
-        # accelerator: str = "auto",
-        # devices: Union[int, list[int], str] = "auto",
+        accelerator: str = "auto",
+        devices: Union[int, list[int], str] = "auto",
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
-        # shuffle_set_split: bool = True,
+        shuffle_set_split: bool = True,
         batch_size: int = 128,
         early_stopping: bool = False,
         check_val_every_n_epoch: Optional[int] = None,
         # reduce_lr_on_plateau: bool = True,
-        # n_steps_kl_warmup: Union[int, None] = None,
+        n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = None,
-        adversarial_classifier: Optional[bool] = None,
+        adversarial_classifier: Optional[bool] = False,
         plan_kwargs: Optional[dict] = None,
         **kwargs,
     ):
@@ -285,8 +287,8 @@ class CytoVI(
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
-        if adversarial_classifier is None:
-            adversarial_classifier = self._use_adversarial_classifier
+        # if adversarial_classifier is None:
+        #     adversarial_classifier = self._use_adversarial_classifier
         # n_steps_kl_warmup = (
         #     n_steps_kl_warmup
         #     if n_steps_kl_warmup is not None
@@ -300,7 +302,7 @@ class CytoVI(
             "adversarial_classifier": adversarial_classifier,
         #     "reduce_lr_on_plateau": reduce_lr_on_plateau,
             "n_epochs_kl_warmup": n_epochs_kl_warmup,
-        #     "n_steps_kl_warmup": n_steps_kl_warmup,
+            "n_steps_kl_warmup": n_steps_kl_warmup,
         }
         if plan_kwargs is not None:
             plan_kwargs.update(update_dict)
@@ -326,8 +328,8 @@ class CytoVI(
             data_splitter=data_splitter,
             max_epochs=max_epochs,
             # use_gpu=use_gpu,
-            # accelerator=accelerator,
-            # devices=devices,
+            accelerator=accelerator,
+            devices=devices,
             early_stopping=early_stopping,
             # check_val_every_n_epoch=check_val_every_n_epoch,
             **kwargs,
