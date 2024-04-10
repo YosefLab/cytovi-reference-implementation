@@ -119,7 +119,7 @@ class CytoVI(
         n_batch = self.summary_stats.n_batch
 
 
-        self._model_summary_string = (
+        self._model_summary_string = (  # noqa: UP032
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
             "{}, protein_likelihood: {}, latent_distribution: {}, n_proteins: {}"
         ).format(
@@ -141,6 +141,11 @@ class CytoVI(
             self.backbone_marker_mask = all_markers.isin(backbone_markers)
             backbone_str = ", ".join(backbone_markers)
             self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}, \nBackbone markers: {backbone_str}")
+
+            # # add modifications for attention head
+            # feat_indices = np.arrange(adata.n_vars)
+            # feat_is_observed = nan_layer > 0
+            # self.masked_feature_indices = np.where(feat_is_observed, np.tile(self.feat_indices, (adata.n_obs, 1)), adata.n_vars)
         else:
             self.backbone_markers = None
             self.backbone_marker_mask = None

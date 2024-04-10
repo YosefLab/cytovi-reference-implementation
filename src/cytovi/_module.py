@@ -97,15 +97,17 @@ class CytoVAE(BaseModuleClass):
         deeply_inject_covariates: Tunable[bool] = True,
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
         use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
-        var_activation: Optional[Callable] = None,
+        var_activation: Optional[Callable] = None, # set to softplus if masked attention?
         encode_backbone_only: Optional[bool] = False,
         backbone_marker_mask: Optional[list] = None,
         extra_encoder_kwargs: Optional[dict] = None,
         extra_decoder_kwargs: Optional[dict] = None,
         scale_activation: Optional[Literal["softplus", None]] = None,
+        masked_attention: Optional[bool] = False,
 
     ):
         super().__init__()
+        self.n_input = n_input
         self.n_latent = n_latent
         self.log_variational = log_variational
         self.protein_likelihood = protein_likelihood
@@ -115,6 +117,7 @@ class CytoVAE(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.encode_backbone_only = encode_backbone_only
         self.backbone_marker_mask = backbone_marker_mask
+        self.masked_attention = masked_attention
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -131,21 +134,40 @@ class CytoVAE(BaseModuleClass):
         cat_list = [n_batch] + list([] if n_cats_per_cov is None else n_cats_per_cov)
         encoder_cat_list = cat_list if encode_covariates else None
         _extra_encoder_kwargs = extra_encoder_kwargs or {}
-        self.z_encoder = Encoder(
-            n_input_encoder,
-            n_latent,
-            n_cat_list=encoder_cat_list,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
-            distribution=latent_distribution,
-            inject_covariates=deeply_inject_covariates,
-            use_batch_norm=use_batch_norm_encoder,
-            use_layer_norm=use_layer_norm_encoder,
-            var_activation=var_activation,
-            return_dist=True,
-            **_extra_encoder_kwargs,
-        )
+
+        if masked_attention is True:
+            self.z_encoder = AttentionEncoder(
+                n_input_encoder,
+                n_latent,
+                n_cat_list=encoder_cat_list,
+                n_layers=n_layers,
+                n_hidden=n_hidden,
+                dropout_rate=dropout_rate,
+                distribution=latent_distribution,
+                inject_covariates=deeply_inject_covariates,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                var_activation=var_activation,
+                return_dist=True,
+                embed_dim = 5,
+                **_extra_encoder_kwargs,
+            )
+        else:
+            self.z_encoder = Encoder(
+                n_input_encoder, # note: if this works out make sure you also encode the cont covs
+                n_latent,
+                n_cat_list=encoder_cat_list,
+                n_layers=n_layers,
+                n_hidden=n_hidden,
+                dropout_rate=dropout_rate,
+                distribution=latent_distribution,
+                inject_covariates=deeply_inject_covariates,
+                use_batch_norm=use_batch_norm_encoder,
+                use_layer_norm=use_layer_norm_encoder,
+                var_activation=var_activation,
+                return_dist=True,
+                **_extra_encoder_kwargs,
+            )
 
         # decoder goes from n_latent-dimensional space to n_input-d data
         n_input_decoder = n_latent + n_continuous_cov
@@ -178,12 +200,24 @@ class CytoVAE(BaseModuleClass):
 
         x = tensors[REGISTRY_KEYS.X_KEY]
 
+        if self.masked_attention is True:
+            # add feat indices here for attention head
+            size_batch = x.shape[0]
+            nan_mask = tensors[REGISTRY_KEYS.PROTEIN_NAN_MASK]
+            feat_indices = np.arange(self.n_input)
+            feat_is_observed = nan_mask > 0
+            f_att = np.where(feat_is_observed, np.tile(feat_indices, (size_batch, 1)), size_batch)
+            f_att_ = torch.tensor(f_att, dtype=torch.long)
+        else:
+            f_att_ = None
+
         if self.encode_backbone_only is True:
             x_ = x[..., self.backbone_marker_mask]
         else:
             x_ = x
         input_dict = {
             "x": x_,
+            "f_att": f_att_,
             "batch_index": batch_index,
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,
@@ -212,7 +246,7 @@ class CytoVAE(BaseModuleClass):
         return input_dict
 
     @auto_move_data
-    def inference(self, x, batch_index, cont_covs=None, cat_covs=None, n_samples=1):
+    def inference(self, x, f_att, batch_index, cont_covs=None, cat_covs=None, n_samples=1):
         """High level inference method.
 
         Runs the inference (encoder) model.
@@ -229,7 +263,11 @@ class CytoVAE(BaseModuleClass):
             categorical_input = torch.split(cat_covs, 1, dim=1)
         else:
             categorical_input = ()
-        qz, z = self.z_encoder(encoder_input, batch_index, *categorical_input)
+
+        if self.masked_attention is True: # note: write this cleaner
+            qz, z = self.z_encoder(encoder_input, f_att, batch_index, *categorical_input)
+        else:
+            qz, z = self.z_encoder(encoder_input, batch_index, *categorical_input)
 
         if n_samples > 1:
             untran_z = qz.sample((n_samples,))
@@ -512,3 +550,135 @@ class DecoderCytoVI(nn.Module):
             px_param2 = F.softplus(px_param2) + self.decoder_param_eps
 
         return px_param1, px_param2
+
+
+# Encoder
+def _identity(x):
+    return x
+
+class AttentionEncoder(nn.Module):
+    """Encode data of ``n_input`` dimensions into a latent space of ``n_output`` dimensions.
+
+    Uses a fully-connected neural network of ``n_hidden`` layers.
+
+    Parameters
+    ----------
+    n_input
+        The dimensionality of the input (data space)
+    n_output
+        The dimensionality of the output (latent space)
+    n_cat_list
+        A list containing the number of categories
+        for each category of interest. Each category will be
+        included using a one-hot encoding
+    n_layers
+        The number of fully-connected hidden layers
+    n_hidden
+        The number of nodes per hidden layer
+    dropout_rate
+        Dropout rate to apply to each of the hidden layers
+    distribution
+        Distribution of z
+    var_eps
+        Minimum value for the variance;
+        used for numerical stability
+    var_activation
+        Callable used to ensure positivity of the variance.
+        Defaults to :meth:`torch.exp`.
+    return_dist
+        Return directly the distribution of z instead of its parameters.
+    **kwargs
+        Keyword args for :class:`~scvi.nn.FCLayers`
+    """
+
+    def __init__(
+        self,
+        n_input: int,
+        n_output: int,
+        n_cat_list: Iterable[int] = None,
+        n_layers: int = 1,
+        n_hidden: int = 128,
+        dropout_rate: float = 0.1,
+        distribution: str = "normal",
+        var_eps: float = 1e-4,
+        var_activation: Optional[Callable] = None,
+        return_dist: bool = False,
+        embed_dim: int = 5,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.distribution = distribution
+        self.var_eps = var_eps
+
+        self.feat_ids = torch.arange(n_input) #note: make sure n_input is equal to the number of features in the anndata (only encode_BB = False)
+        self.x_proj = nn.Linear(n_input, embed_dim)
+        self.feature_embds = nn.Embedding(n_input + 1, embed_dim)
+        self.attn = nn.MultiheadAttention(
+            1,
+            kdim=embed_dim,
+            vdim=embed_dim,
+            num_heads=1,
+            batch_first=True
+        )
+
+
+        self.nn_mod = FCLayers(
+            n_in=n_input,
+            n_out=n_hidden,
+            n_cat_list=n_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            **kwargs,
+        )
+        self.mean_encoder = nn.Linear(n_hidden, n_output)
+        self.var_encoder = nn.Linear(n_hidden, n_output)
+        self.return_dist = return_dist
+
+        if distribution == "ln":
+            self.z_transformation = nn.Softmax(dim=-1)
+        else:
+            self.z_transformation = _identity
+        self.var_activation = torch.exp if var_activation is None else var_activation
+
+    def forward(self, x: torch.Tensor, f_att: torch.Tensor, *cat_list: int):
+        r"""The forward computation for a single sample.
+
+         #. Encodes the data into latent space using the encoder network
+         #. Generates a mean \\( q_m \\) and variance \\( q_v \\)
+         #. Samples a new value from an i.i.d. multivariate normal \\( \\sim Ne(q_m, \\mathbf{I}q_v) \\)
+
+        Parameters
+        ----------
+        x
+            tensor with shape (n_input,)
+        cat_list
+            list of category membership(s) for this sample
+
+        Returns
+        -------
+        3-tuple of :py:class:`torch.Tensor`
+            tensors of shape ``(n_latent,)`` for mean and var, and sample
+
+        """
+        # Attention
+        feats = self.feature_embds(f_att)
+        # For every cell, feat_j is the embedding of the feature j if it is observed
+        # if it is not, we use a placeholder embedding instead (basically a zero vector)
+
+        x_proj_ = x.unsqueeze(-1)
+        # feats is shape (n_cells, n_features, embed_dim)
+        # x_proj_ is shape (n_cells, n_features, 1)
+
+        attn_output, _ = self.attn(x_proj_, feats, feats)
+        attn_output = attn_output.squeeze(-1)
+        q = self.nn_mod(attn_output, *cat_list)
+        q_m = self.mean_encoder(q)
+        q_v = self.var_activation(self.var_encoder(q)) + self.var_eps # was softplus in pierres example
+
+        dist = Normal(q_m, q_v.sqrt())
+        latent = self.z_transformation(dist.rsample())
+        if self.return_dist:
+            return dist, latent
+        return q_m, q_v, latent
