@@ -15,6 +15,7 @@ class _REGISTRY_KEYS_NT(NamedTuple):
     LATENT_QZV_KEY: str = "latent_qzv"
     OBSERVED_LIB_SIZE: str = "observed_lib_size"
     PROTEIN_NAN_MASK: str = "nan_layer"
+    PROTEIN_FEAT_INDICES: str = "feat_indices"
 
 
 REGISTRY_KEYS = _REGISTRY_KEYS_NT()

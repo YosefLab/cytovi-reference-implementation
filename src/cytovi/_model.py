@@ -183,6 +183,7 @@ class CytoVI(
         categorical_covariate_keys: Optional[list[str]] = None,
         continuous_covariate_keys: Optional[list[str]] = None,
         nan_layer: Optional[str] = None,
+        feat_indices: Optional[str] = None,
         **kwargs,
     ):
         """%(summary)s.
@@ -213,6 +214,10 @@ class CytoVI(
 
         if nan_layer is not None:
             anndata_fields.append(LayerField(REGISTRY_KEYS.PROTEIN_NAN_MASK, nan_layer))
+
+        # automate this if it works and write cleaner
+        if feat_indices is not None:
+            anndata_fields.append(LayerField(REGISTRY_KEYS.PROTEIN_FEAT_INDICES, feat_indices, is_count_data=True))
 
         adata_manager = AnnDataManager(fields=anndata_fields, setup_method_args=setup_method_args)
         adata_manager.register_fields(adata, **kwargs)

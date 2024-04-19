@@ -136,6 +136,11 @@ class CytoVAE(BaseModuleClass):
         _extra_encoder_kwargs = extra_encoder_kwargs or {}
 
         if masked_attention is True:
+            use_batch_norm_encoder = False
+            use_layer_norm_encoder = True
+            use_batch_norm_decoder = False
+            use_layer_norm_decoder = True
+
             self.z_encoder = AttentionEncoder(
                 n_input_encoder,
                 n_latent,
@@ -202,14 +207,16 @@ class CytoVAE(BaseModuleClass):
 
         if self.masked_attention is True:
             # add feat indices here for attention head
-            size_batch = x.shape[0]
-            nan_mask = tensors[REGISTRY_KEYS.PROTEIN_NAN_MASK]
-            feat_indices = np.arange(self.n_input)
-            feat_is_observed = nan_mask > 0
-            f_att = np.where(feat_is_observed, np.tile(feat_indices, (size_batch, 1)), size_batch)
-            f_att_ = torch.tensor(f_att, dtype=torch.long)
+            # size_batch = x.shape[0]
+            # n_features = x.shape[1]
+
+            # nan_mask = tensors[REGISTRY_KEYS.PROTEIN_NAN_MASK]
+            # feat_indices = torch.arange(n_features)
+            # feat_is_observed = nan_mask > 0
+            # f_att = torch.where(feat_is_observed, torch.tile(feat_indices, (size_batch, 1)), n_features)
+            f_att = tensors[REGISTRY_KEYS.PROTEIN_FEAT_INDICES]
         else:
-            f_att_ = None
+            f_att = None
 
         if self.encode_backbone_only is True:
             x_ = x[..., self.backbone_marker_mask]
@@ -217,7 +224,7 @@ class CytoVAE(BaseModuleClass):
             x_ = x
         input_dict = {
             "x": x_,
-            "f_att": f_att_,
+            "f_att": f_att,
             "batch_index": batch_index,
             "cont_covs": cont_covs,
             "cat_covs": cat_covs,
@@ -611,8 +618,13 @@ class AttentionEncoder(nn.Module):
         self.distribution = distribution
         self.var_eps = var_eps
 
-        self.feat_ids = torch.arange(n_input) #note: make sure n_input is equal to the number of features in the anndata (only encode_BB = False)
-        self.x_proj = nn.Linear(n_input, embed_dim)
+        self.dropout = nn.Dropout(dropout_rate)
+        self.layer_norm1 = nn.LayerNorm(n_input)
+        self.layer_norm2 = nn.LayerNorm(n_input)
+
+
+        # self.linear_x = nn.Linear(n_input, embed_dim)
+
         self.feature_embds = nn.Embedding(n_input + 1, embed_dim)
         self.attn = nn.MultiheadAttention(
             1,
@@ -622,18 +634,23 @@ class AttentionEncoder(nn.Module):
             batch_first=True
         )
 
-
-        self.nn_mod = FCLayers(
-            n_in=n_input,
-            n_out=n_hidden,
-            n_cat_list=n_cat_list,
-            n_layers=n_layers,
-            n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
-            **kwargs,
+        self.nn_mod = nn.Sequential(
+            nn.Linear(n_input, n_hidden),
+            nn.Dropout(dropout_rate),
+            nn.ReLU(inplace=True),
+            nn.Linear(n_hidden, n_input)
         )
-        self.mean_encoder = nn.Linear(n_hidden, n_output)
-        self.var_encoder = nn.Linear(n_hidden, n_output)
+        # self.nn_mod = FCLayers(
+        #     n_in=n_input,
+        #     n_out=n_hidden,
+        #     n_cat_list=n_cat_list,
+        #     n_layers=n_layers,
+        #     n_hidden=n_hidden,
+        #     dropout_rate=dropout_rate,
+        #     **kwargs,
+        # )
+        self.mean_encoder = nn.Linear(n_input, n_output)
+        self.var_encoder = nn.Linear(n_input, n_output)
         self.return_dist = return_dist
 
         if distribution == "ln":
@@ -663,19 +680,31 @@ class AttentionEncoder(nn.Module):
 
         """
         # Attention
-        feats = self.feature_embds(f_att)
+        feats = self.feature_embds(f_att.type(torch.long))
         # For every cell, feat_j is the embedding of the feature j if it is observed
         # if it is not, we use a placeholder embedding instead (basically a zero vector)
 
-        x_proj_ = x.unsqueeze(-1)
+        x_proj = x.unsqueeze(-1)
+        # x_proj_ = self.linear_x(x_proj)
+
+
         # feats is shape (n_cells, n_features, embed_dim)
         # x_proj_ is shape (n_cells, n_features, 1)
 
-        attn_output, _ = self.attn(x_proj_, feats, feats)
-        attn_output = attn_output.squeeze(-1)
-        q = self.nn_mod(attn_output, *cat_list)
+        attn_output, _ = self.attn(x_proj, feats, feats) # attn_output is shape (n_cells, n_features, 1)
+
+        # add attention output to x
+        x_att = x_proj + self.dropout(attn_output)
+        x_att = x_att.squeeze(-1) # attn_output is shape (n_cells, n_features)
+
+        x_att = self.layer_norm1(x_att)
+
+        ff_out = self.nn_mod(x_att)
+        x_att = x_att + self.dropout(ff_out)
+
+        q = self.layer_norm2(x_att)
         q_m = self.mean_encoder(q)
-        q_v = self.var_activation(self.var_encoder(q)) + self.var_eps # was softplus in pierres example
+        q_v = self.var_activation(self.var_encoder(q)) + self.var_eps
 
         dist = Normal(q_m, q_v.sqrt())
         latent = self.z_transformation(dist.rsample())
