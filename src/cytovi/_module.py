@@ -154,7 +154,7 @@ class CytoVAE(BaseModuleClass):
                 use_layer_norm=use_layer_norm_encoder,
                 var_activation=var_activation,
                 return_dist=True,
-                embed_dim = 5,
+                embed_dim = 20,
                 **_extra_encoder_kwargs,
             )
         else:
@@ -563,6 +563,163 @@ class DecoderCytoVI(nn.Module):
 def _identity(x):
     return x
 
+# the code below works but does not incorporate the full transformer encoder
+# class AttentionEncoder(nn.Module):
+#     """Encode data of ``n_input`` dimensions into a latent space of ``n_output`` dimensions.
+
+#     Uses a fully-connected neural network of ``n_hidden`` layers.
+
+#     Parameters
+#     ----------
+#     n_input
+#         The dimensionality of the input (data space)
+#     n_output
+#         The dimensionality of the output (latent space)
+#     n_cat_list
+#         A list containing the number of categories
+#         for each category of interest. Each category will be
+#         included using a one-hot encoding
+#     n_layers
+#         The number of fully-connected hidden layers
+#     n_hidden
+#         The number of nodes per hidden layer
+#     dropout_rate
+#         Dropout rate to apply to each of the hidden layers
+#     distribution
+#         Distribution of z
+#     var_eps
+#         Minimum value for the variance;
+#         used for numerical stability
+#     var_activation
+#         Callable used to ensure positivity of the variance.
+#         Defaults to :meth:`torch.exp`.
+#     return_dist
+#         Return directly the distribution of z instead of its parameters.
+#     **kwargs
+#         Keyword args for :class:`~scvi.nn.FCLayers`
+#     """
+
+#     def __init__(
+#         self,
+#         n_input: int,
+#         n_output: int,
+#         n_cat_list: Iterable[int] = None,
+#         n_layers: int = 1,
+#         n_hidden: int = 128,
+#         dropout_rate: float = 0.1,
+#         distribution: str = "normal",
+#         var_eps: float = 1e-4,
+#         var_activation: Optional[Callable] = None,
+#         return_dist: bool = False,
+#         embed_dim: int = 20,
+#         **kwargs,
+#     ):
+#         super().__init__()
+
+#         self.distribution = distribution
+#         self.var_eps = var_eps
+#         self.embed_dim = embed_dim
+
+#         self.dropout = nn.Dropout(dropout_rate)
+#         self.layer_norm1 = nn.LayerNorm(n_input)
+#         self.layer_norm2 = nn.LayerNorm(n_input)
+
+
+#         # self.linear_x = nn.Linear(n_input, embed_dim)
+
+#         self.feature_embds = nn.Embedding(n_input + 1, embed_dim)
+#         self.attn = nn.MultiheadAttention(
+#             embed_dim=embed_dim,
+#             kdim=embed_dim,
+#             vdim=embed_dim,
+#             num_heads=1,
+#             batch_first=True
+#         )
+
+#         self.nn_mod = nn.Sequential(
+#             nn.Linear(n_input, n_hidden),
+#             nn.Dropout(dropout_rate),
+#             nn.ReLU(inplace=True),
+#             nn.Linear(n_hidden, n_input)
+#         )
+
+
+#         # self.nn_mod = FCLayers(
+#         #     n_in=n_input,
+#         #     n_out=n_hidden,
+#         #     n_cat_list=n_cat_list,
+#         #     n_layers=n_layers,
+#         #     n_hidden=n_hidden,
+#         #     dropout_rate=dropout_rate,
+#         #     **kwargs,
+#         # )
+#         self.mean_encoder = nn.Linear(n_input, n_output)
+#         self.var_encoder = nn.Linear(n_input, n_output)
+#         self.return_dist = return_dist
+
+#         if distribution == "ln":
+#             self.z_transformation = nn.Softmax(dim=-1)
+#         else:
+#             self.z_transformation = _identity
+#         self.var_activation = torch.exp if var_activation is None else var_activation
+
+#     def forward(self, x: torch.Tensor, f_att: torch.Tensor, *cat_list: int):
+#         r"""The forward computation for a single sample.
+
+#          #. Encodes the data into latent space using the encoder network
+#          #. Generates a mean \\( q_m \\) and variance \\( q_v \\)
+#          #. Samples a new value from an i.i.d. multivariate normal \\( \\sim Ne(q_m, \\mathbf{I}q_v) \\)
+
+#         Parameters
+#         ----------
+#         x
+#             tensor with shape (n_input,)
+#         cat_list
+#             list of category membership(s) for this sample
+
+#         Returns
+#         -------
+#         3-tuple of :py:class:`torch.Tensor`
+#             tensors of shape ``(n_latent,)`` for mean and var, and sample
+
+#         """
+#         # Attention
+#         feats = self.feature_embds(f_att.type(torch.long)) # write cleaner if it works
+#         # For every cell, feat_j is the embedding of the feature j if it is observed
+#         # if it is not, we use a placeholder embedding instead (basically a zero vector)
+
+#         x_proj = x.unsqueeze(-1)
+#         x_proj = x_proj.expand(-1, -1, self.embed_dim)
+
+
+#         # feats is shape (n_cells, n_features, embed_dim)
+#         # x_proj_ is shape (n_cells, n_features, 1)
+
+#         attn_output, _ = self.attn(x_proj, feats, feats) # attn_output is shape (n_cells, n_features, 1)
+
+#         # add attention output to x
+#         x_att = x_proj + self.dropout(attn_output)
+#         x_att = x_att.mean(dim=-1) # bring shape to (n_cells, n_features) again; try to aggregate features instead; better way: class token
+#         # x_att = x_att.squeeze(-1) # attn_output is shape (n_cells, n_features)
+
+#         x_att = self.layer_norm1(x_att)
+
+#         ff_out = self.nn_mod(x_att)
+#         x_att = x_att + self.dropout(ff_out)
+
+#         q = self.layer_norm2(x_att)
+
+#         q_m = self.mean_encoder(q)
+#         q_v = self.var_activation(self.var_encoder(q)) + self.var_eps
+
+#         dist = Normal(q_m, q_v.sqrt())
+#         latent = self.z_transformation(dist.rsample())
+#         if self.return_dist:
+#             return dist, latent
+#         return q_m, q_v, latent
+
+
+
 class AttentionEncoder(nn.Module):
     """Encode data of ``n_input`` dimensions into a latent space of ``n_output`` dimensions.
 
@@ -610,47 +767,48 @@ class AttentionEncoder(nn.Module):
         var_eps: float = 1e-4,
         var_activation: Optional[Callable] = None,
         return_dist: bool = False,
-        embed_dim: int = 5,
+        embed_dim: int = 20,
+        use_layer_norm: bool = True,
+        use_batch_norm: bool = False,
         **kwargs,
     ):
         super().__init__()
 
         self.distribution = distribution
         self.var_eps = var_eps
+        self.embed_dim = embed_dim
+        self.n_input = n_input
 
-        self.dropout = nn.Dropout(dropout_rate)
-        self.layer_norm1 = nn.LayerNorm(n_input)
-        self.layer_norm2 = nn.LayerNorm(n_input)
+        self.cls_token = torch.nn.Parameter(
+            torch.randn(1, 1, 2*embed_dim)
+        )
 
+        self.batch_norm = nn.BatchNorm1d(n_input)
+        self.feature_embds = nn.Embedding(n_input, embed_dim)
 
-        # self.linear_x = nn.Linear(n_input, embed_dim)
+        self.cell_emdbs = FCLayers(
+            n_in=1,
+            n_out=embed_dim,
+            n_cat_list=n_cat_list,
+            n_layers=n_layers,
+            n_hidden=n_hidden,
+            dropout_rate=dropout_rate,
+            use_layer_norm=use_layer_norm,
+            use_batch_norm=use_batch_norm,
+            **kwargs,
+        )
 
-        self.feature_embds = nn.Embedding(n_input + 1, embed_dim)
-        self.attn = nn.MultiheadAttention(
-            1,
-            kdim=embed_dim,
-            vdim=embed_dim,
-            num_heads=1,
+        self.transformer_layer = nn.TransformerEncoder(nn.TransformerEncoderLayer(
+            d_model=embed_dim*2,
+            nhead=1,
+            dim_feedforward=n_hidden,
+            dropout=dropout_rate,
+            activation='relu',
             batch_first=True
-        )
+         ), num_layers=1)
 
-        self.nn_mod = nn.Sequential(
-            nn.Linear(n_input, n_hidden),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(inplace=True),
-            nn.Linear(n_hidden, n_input)
-        )
-        # self.nn_mod = FCLayers(
-        #     n_in=n_input,
-        #     n_out=n_hidden,
-        #     n_cat_list=n_cat_list,
-        #     n_layers=n_layers,
-        #     n_hidden=n_hidden,
-        #     dropout_rate=dropout_rate,
-        #     **kwargs,
-        # )
-        self.mean_encoder = nn.Linear(n_input, n_output)
-        self.var_encoder = nn.Linear(n_input, n_output)
+        self.dist_encoder = nn.Linear(2*embed_dim, 2*n_output)
+
         self.return_dist = return_dist
 
         if distribution == "ln":
@@ -680,31 +838,36 @@ class AttentionEncoder(nn.Module):
 
         """
         # Attention
-        feats = self.feature_embds(f_att.type(torch.long))
-        # For every cell, feat_j is the embedding of the feature j if it is observed
-        # if it is not, we use a placeholder embedding instead (basically a zero vector)
+        feats = self.feature_embds(f_att.mean(0).type(torch.long)) # write cleaner if it works
 
-        x_proj = x.unsqueeze(-1)
-        # x_proj_ = self.linear_x(x_proj)
+        # feats is cell x protein x embed_dim
+        # print('feats', feats.shape)
+        # do we want to have a layer norm after the embeddings?
+        xproj = self.batch_norm(x)
+        x_proj = xproj.unsqueeze(-1)
+        x_proj = self.cell_emdbs(x_proj, *cat_list)
+        # x_proj is cell x protein x embed_dim
+        # print('x_proj', x_proj.shape)
+
+        feats = feats.unsqueeze(0).expand(x_proj.shape[0], -1, -1)
+
+        combined_embds = torch.concat((feats, x_proj), axis = -1)
+
+        cls_token_ = self.cls_token.expand(x_proj.shape[0], -1, -1)
+        combined_embds = torch.concat((cls_token_, combined_embds), dim = 1)
+        # concat cls token at protein axis
+        # combined_embds = feats + (x_proj.unsqueeze(2).expand(-1, -1, self.embed_dim))
+        # combined_embds is cell x protein x embed_dim
+        # print('combined_embds', combined_embds.shape)
 
 
-        # feats is shape (n_cells, n_features, embed_dim)
-        # x_proj_ is shape (n_cells, n_features, 1)
+        att_out = self.transformer_layer(combined_embds)
+        # q = att_out[:, :, self.embed_dim:].mean(1)
+        q = att_out[:, 0, :]
+        # print('q', q.shape)
 
-        attn_output, _ = self.attn(x_proj, feats, feats) # attn_output is shape (n_cells, n_features, 1)
-
-        # add attention output to x
-        x_att = x_proj + self.dropout(attn_output)
-        x_att = x_att.squeeze(-1) # attn_output is shape (n_cells, n_features)
-
-        x_att = self.layer_norm1(x_att)
-
-        ff_out = self.nn_mod(x_att)
-        x_att = x_att + self.dropout(ff_out)
-
-        q = self.layer_norm2(x_att)
-        q_m = self.mean_encoder(q)
-        q_v = self.var_activation(self.var_encoder(q)) + self.var_eps
+        q_m, q_v = self.dist_encoder(q).chunk(2, dim=-1)
+        q_v = self.var_activation(q_v) + self.var_eps
 
         dist = Normal(q_m, q_v.sqrt())
         latent = self.z_transformation(dist.rsample())
