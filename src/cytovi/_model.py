@@ -20,8 +20,9 @@ from scvi.data.fields import (
 from scvi.dataloaders import DataSplitter
 from scvi.model._utils import _get_batch_code_from_category
 from scvi.model.base import ArchesMixin, BaseModelClass, RNASeqMixin, UnsupervisedTrainingMixin, VAEMixin
-from scvi.train import TrainRunner
+from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.utils import setup_anndata_dsp
+from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import CytoVAE
@@ -92,7 +93,7 @@ class CytoVI(
     """
 
     _module_cls = CytoVAE
-    # _training_plan_cls = AdversarialTrainingPlan
+    _training_plan_cls = AdversarialTrainingPlan
     _data_splitter_cls = DataSplitter
     _train_runner_cls = TrainRunner
 
@@ -105,6 +106,7 @@ class CytoVI(
         dropout_rate: float = 0.1,
         protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
+        encode_backbone_only: bool = False,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -116,20 +118,6 @@ class CytoVI(
         )
         n_batch = self.summary_stats.n_batch
 
-        self.module = self._module_cls(
-            n_input=self.summary_stats.n_vars,
-            n_batch=n_batch,
-            n_labels=self.summary_stats.n_labels,
-            n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
-            n_cats_per_cov=n_cats_per_cov,
-            n_hidden=n_hidden,
-            n_latent=n_latent,
-            n_layers=n_layers,
-            dropout_rate=dropout_rate,
-            protein_likelihood=protein_likelihood,
-            latent_distribution=latent_distribution,
-            **model_kwargs,
-        )
 
         self._model_summary_string = (
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
@@ -143,6 +131,40 @@ class CytoVI(
             latent_distribution,
             self.summary_stats.n_vars,
         )
+
+        if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
+            nan_layer = self.adata_manager.get_from_registry("nan_layer")
+            all_markers = adata.var_names
+            backbone_markers = list(all_markers[~np.any(nan_layer == 0, axis=0)])
+            self.backbone_markers = backbone_markers
+            self.nan_imputation = True
+            self.backbone_marker_mask = all_markers.isin(backbone_markers)
+            backbone_str = ", ".join(backbone_markers)
+            self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}, \nBackbone markers: {backbone_str}")
+        else:
+            self.backbone_markers = None
+            self.backbone_marker_mask = None
+            self.nan_imputation = False
+            self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}")
+
+        self.module = self._module_cls(
+            n_input=self.summary_stats.n_vars,
+            n_batch=n_batch,
+            n_labels=self.summary_stats.n_labels,
+            n_continuous_cov=self.summary_stats.get("n_extra_continuous_covs", 0),
+            n_cats_per_cov=n_cats_per_cov,
+            n_hidden=n_hidden,
+            n_latent=n_latent,
+            n_layers=n_layers,
+            dropout_rate=dropout_rate,
+            protein_likelihood=protein_likelihood,
+            latent_distribution=latent_distribution,
+            encode_backbone_only=encode_backbone_only,
+            backbone_marker_mask=self.backbone_marker_mask,
+            **model_kwargs,
+        )
+
+
         self.init_params_ = self._get_init_params(locals())
 
     @classmethod
@@ -199,120 +221,120 @@ class CytoVI(
         rich.print(summary_string)
         return ""
 
-    # def train(
-    #     self,
-    #     max_epochs: Optional[int] = None,
-    #     lr: float = 4e-3,
-    #     use_gpu: Optional[Union[str, int, bool]] = None,
-    #     # accelerator: str = "auto",
-    #     # devices: Union[int, List[int], str] = "auto",
-    #     train_size: float = 0.9,
-    #     validation_size: Optional[float] = None,
-    #     # shuffle_set_split: bool = True,
-    #     batch_size: int = 128,
-    #     early_stopping: bool = False,
-    #     # check_val_every_n_epoch: Optional[int] = None,
-    #     # reduce_lr_on_plateau: bool = True,
-    #     # n_steps_kl_warmup: Union[int, None] = None,
-    #     # n_epochs_kl_warmup: Union[int, None] = None,
-    #     adversarial_classifier: Optional[bool] = None,
-    #     plan_kwargs: Optional[dict] = None,
-    #     **kwargs,
-    # ):
-    #     """Trains the model using amortized variational inference.
+    @devices_dsp.dedent
+    def train(
+        self,
+        max_epochs: Optional[int] = None,
+        lr: float = 1e-3,
+        accelerator: str = "auto",
+        devices: Union[int, list[int], str] = "auto",
+        train_size: float = 0.9,
+        validation_size: Optional[float] = None,
+        shuffle_set_split: bool = True,
+        batch_size: int = 128,
+        early_stopping: bool = False,
+        check_val_every_n_epoch: Optional[int] = None,
+        # reduce_lr_on_plateau: bool = True,
+        n_steps_kl_warmup: Union[int, None] = None,
+        n_epochs_kl_warmup: Union[int, None] = None,
+        adversarial_classifier: Optional[bool] = False,
+        plan_kwargs: Optional[dict] = None,
+        **kwargs,
+    ):
+        """Trains the model using amortized variational inference.
 
-    #     Parameters
-    #     ----------
-    #     max_epochs
-    #         Number of passes through the dataset.
-    #     lr
-    #         Learning rate for optimization.
-    #     %(param_use_gpu)s
-    #     %(param_accelerator)s
-    #     %(param_devices)s
-    #     train_size
-    #         Size of training set in the range [0.0, 1.0].
-    #     validation_size
-    #         Size of the test set. If `None`, defaults to 1 - `train_size`. If
-    #         `train_size + validation_size < 1`, the remaining cells belong to a test set.
-    #     shuffle_set_split
-    #         Whether to shuffle indices before splitting. If `False`, the val, train, and test set are split in the
-    #         sequential order of the data according to `validation_size` and `train_size` percentages.
-    #     batch_size
-    #         Minibatch size to use during training.
-    #     early_stopping
-    #         Whether to perform early stopping with respect to the validation set.
-    #     check_val_every_n_epoch
-    #         Check val every n train epochs. By default, val is not checked, unless `early_stopping` is `True`
-    #         or `reduce_lr_on_plateau` is `True`. If either of the latter conditions are met, val is checked
-    #         every epoch.
-    #     reduce_lr_on_plateau
-    #         Reduce learning rate on plateau of validation metric (default is ELBO).
-    #     n_steps_kl_warmup
-    #         Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
-    #         Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
-    #         to `floor(0.75 * adata.n_obs)`.
-    #     n_epochs_kl_warmup
-    #         Number of epochs to scale weight on KL divergences from 0 to 1.
-    #         Overrides `n_steps_kl_warmup` when both are not `None`.
-    #     adversarial_classifier
-    #         Whether to use adversarial classifier in the latent space. This helps mixing when
-    #         there are missing proteins in any of the batches. Defaults to `True` is missing proteins
-    #         are detected.
-    #     plan_kwargs
-    #         Keyword args for :class:`~scvi.train.AdversarialTrainingPlan`. Keyword arguments passed to
-    #         `train()` will overwrite values present in `plan_kwargs`, when appropriate.
-    #     **kwargs
-    #         Other keyword args for :class:`~scvi.train.Trainer`.
-    #     """
-    #     if adversarial_classifier is None:
-    #         adversarial_classifier = self._use_adversarial_classifier
-    #     # n_steps_kl_warmup = (
-    #     #     n_steps_kl_warmup
-    #     #     if n_steps_kl_warmup is not None
-    #     #     else int(0.75 * self.adata.n_obs)
-    #     # )
-    #     # if reduce_lr_on_plateau:
-    #     #     check_val_every_n_epoch = 1
+        Parameters
+        ----------
+        max_epochs
+            Number of passes through the dataset.
+        lr
+            Learning rate for optimization.
+        %(param_use_gpu)s
+        %(param_accelerator)s
+        %(param_devices)s
+        train_size
+            Size of training set in the range [0.0, 1.0].
+        validation_size
+            Size of the test set. If `None`, defaults to 1 - `train_size`. If
+            `train_size + validation_size < 1`, the remaining cells belong to a test set.
+        shuffle_set_split
+            Whether to shuffle indices before splitting. If `False`, the val, train, and test set are split in the
+            sequential order of the data according to `validation_size` and `train_size` percentages.
+        batch_size
+            Minibatch size to use during training.
+        early_stopping
+            Whether to perform early stopping with respect to the validation set.
+        check_val_every_n_epoch
+            Check val every n train epochs. By default, val is not checked, unless `early_stopping` is `True`
+            or `reduce_lr_on_plateau` is `True`. If either of the latter conditions are met, val is checked
+            every epoch.
+        reduce_lr_on_plateau
+            Reduce learning rate on plateau of validation metric (default is ELBO).
+        n_steps_kl_warmup
+            Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
+            Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
+            to `floor(0.75 * adata.n_obs)`.
+        n_epochs_kl_warmup
+            Number of epochs to scale weight on KL divergences from 0 to 1.
+            Overrides `n_steps_kl_warmup` when both are not `None`.
+        adversarial_classifier
+            Whether to use adversarial classifier in the latent space. This helps mixing when
+            there are missing proteins in any of the batches. Defaults to `True` is missing proteins
+            are detected.
+        plan_kwargs
+            Keyword args for :class:`~scvi.train.AdversarialTrainingPlan`. Keyword arguments passed to
+            `train()` will overwrite values present in `plan_kwargs`, when appropriate.
+        **kwargs
+            Other keyword args for :class:`~scvi.train.Trainer`.
+        """
+        # if adversarial_classifier is None:
+        #     adversarial_classifier = self._use_adversarial_classifier
+        # n_steps_kl_warmup = (
+        #     n_steps_kl_warmup
+        #     if n_steps_kl_warmup is not None
+        #     else int(0.75 * self.adata.n_obs)
+        # )
+        # if reduce_lr_on_plateau:
+        #     check_val_every_n_epoch = 1
 
-    #     update_dict = {
-    #         "lr": lr,
-    #         "adversarial_classifier": adversarial_classifier,
-    #         # "reduce_lr_on_plateau": reduce_lr_on_plateau,
-    #         # "n_epochs_kl_warmup": n_epochs_kl_warmup,
-    #         # "n_steps_kl_warmup": n_steps_kl_warmup,
-    #     }
-    #     if plan_kwargs is not None:
-    #         plan_kwargs.update(update_dict)
-    #     else:
-    #         plan_kwargs = update_dict
+        update_dict = {
+            "lr": lr,
+            "adversarial_classifier": adversarial_classifier,
+        #     "reduce_lr_on_plateau": reduce_lr_on_plateau,
+            "n_epochs_kl_warmup": n_epochs_kl_warmup,
+            "n_steps_kl_warmup": n_steps_kl_warmup,
+        }
+        if plan_kwargs is not None:
+            plan_kwargs.update(update_dict)
+        else:
+            plan_kwargs = update_dict
 
-    #     # if max_epochs is None:
-    #     #     max_epochs = get_max_epochs_heuristic(self.adata.n_obs)
+        # if max_epochs is None:
+        #     max_epochs = get_max_epochs_heuristic(self.adata.n_obs)
 
-    #     plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else {}
+        plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else {}
 
-    #     data_splitter = self._data_splitter_cls(
-    #         self.adata_manager,
-    #         train_size=train_size,
-    #         validation_size=validation_size,
-    #         # shuffle_set_split=shuffle_set_split,
-    #         batch_size=batch_size,
-    #     )
-    #     training_plan = self._training_plan_cls(self.module, **plan_kwargs)
-    #     runner = self._train_runner_cls(
-    #         self,
-    #         training_plan=training_plan,
-    #         data_splitter=data_splitter,
-    #         max_epochs=max_epochs,
-    #         use_gpu=use_gpu,
-    #         # accelerator=accelerator,
-    #         # devices=devices,
-    #         early_stopping=early_stopping,
-    #         # check_val_every_n_epoch=check_val_every_n_epoch,
-    #         **kwargs,
-    #     )
-    #     return runner()
+        data_splitter = self._data_splitter_cls(
+            self.adata_manager,
+            train_size=train_size,
+            validation_size=validation_size,
+            # shuffle_set_split=shuffle_set_split,
+            batch_size=batch_size,
+        )
+        training_plan = self._training_plan_cls(self.module, **plan_kwargs)
+        runner = self._train_runner_cls(
+            self,
+            training_plan=training_plan,
+            data_splitter=data_splitter,
+            max_epochs=max_epochs,
+            # use_gpu=use_gpu,
+            accelerator=accelerator,
+            devices=devices,
+            early_stopping=early_stopping,
+            # check_val_every_n_epoch=check_val_every_n_epoch,
+            **kwargs,
+        )
+        return runner()
 
     @torch.inference_mode()
     def posterior_predictive_sample(
@@ -436,15 +458,11 @@ class CytoVI(
         adata = self._validate_anndata(adata)
         all_batches = list(np.unique(self.adata_manager.get_from_registry("batch")))
 
-        if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
+        if self.nan_imputation is True:
             msg = "detected missing proteins between batches - will impute missing markers"
             warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+            backbone_marker_mask=self.backbone_marker_mask
             nan_imputation = True
-
-            nan_layer = self.adata_manager.get_from_registry("nan_layer")
-            all_markers = adata.var_names
-            backbone_markers = list(all_markers[~np.any(nan_layer == 0, axis=0)])
-            backbone_marker_mask = all_markers.isin(backbone_markers)
 
         else:
             nan_imputation = False
