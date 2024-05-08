@@ -17,7 +17,11 @@ def histogram(
     layer_key: str = "raw",
     downsample: bool = True,
     n_obs: int = 10000,
-    col_wrap=None,
+    col_wrap: int = None,
+    tight_layout: bool = True,
+    save: Union[bool, str] = None,
+    return_plot: bool = False,
+    kde_kwargs: dict = None,
     **kwargs,
 ):
     """
@@ -52,6 +56,9 @@ def histogram(
     # Plot density plots for all markers
     plot_marker_histograms(adata, marker='all', group_by='Batch')
     """
+    if kde_kwargs is None:
+        kde_kwargs = {}
+
     if marker == "all":
         marker = adata.var_names
     elif isinstance(marker, str):
@@ -81,13 +88,23 @@ def histogram(
     g = sns.FacetGrid(
         data_plot_melt, col="variable", hue=groupby, col_wrap=col_wrap, sharey=False, sharex=False, **kwargs
     )
-    g.map(sns.kdeplot, "value", fill=True)
+    g.map(sns.kdeplot, "value", fill=True, **kde_kwargs)
     g.set_titles("{col_name}")
     g.set(yticks=[])
     g.set_axis_labels("", "")
     g.add_legend()
     g.fig.text(0, 0.5, "Density", va="center", ha="center", rotation="vertical")
-    plt.show()
+
+    if tight_layout:
+        g.fig.tight_layout()
+
+    if save is not None:
+        if save is True:
+            save = "marker_histogram.png"
+        g.savefig(save)
+
+    if return_plot:
+        return g
 
 
 def biaxial(
