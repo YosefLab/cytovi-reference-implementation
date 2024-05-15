@@ -2,7 +2,9 @@ from typing import Literal, Optional
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 from anndata import AnnData
+from scipy import linalg
 from scipy.stats import pearsonr, spearmanr
 from scvi.criticism._constants import (
     DATA_VAR_RAW,
@@ -11,6 +13,7 @@ from scvi.criticism._constants import (
 )
 from scvi.criticism._ppc import PosteriorPredictiveCheck, _make_dataset_dense
 from scvi.model.base import BaseModelClass
+from sklearn.decomposition import FactorAnalysis
 from sklearn.metrics import mean_absolute_error as mae
 
 Dims = Literal["cells", "features"]
@@ -19,12 +22,14 @@ METRIC_MEAN_GENE = "mean_gene"
 METRIC_STD_CELL = "std_cell"
 METRIC_STD_GENE = "std_gene"
 
+FA_VAR = "FA"
+
 
 class PosteriorPredictiveCheck(PosteriorPredictiveCheck):
     """
     Posterior predictive checks for CytoVI models.
 
-    Inherits from scvi-criticism's PPC class but adds additional funcitonality for non-count flow cytometry data.
+    Inherits from scvi-criticism's PPC class but adds additional funcitonality for non-count flow cytometry data and additional benchmarking methods.
     """
 
     def __init__(
@@ -36,6 +41,64 @@ class PosteriorPredictiveCheck(PosteriorPredictiveCheck):
     ):
         count_layer_key = layer_key
         super().__init__(adata, models_dict, count_layer_key, n_samples)
+
+    def store_FA_samples(self, n_samples: int = 10, train_indices = None) -> None:
+        """
+        Store the samples from the FA model in the samples dataset.; FA code from totalVI reproducibility
+
+        Parameters
+        ----------
+        n_samples
+            Number of samples to store.
+        """
+        if train_indices is None:
+            data_train = self.adata.layers[self.count_layer_key]
+        else:
+            data_train = self.adata.layers[self.count_layer_key][train_indices, :]
+
+        data_trans = self.adata.layers[self.count_layer_key]
+
+        fa = FactorAnalysis()
+        fa.fit(data_train)
+
+        # transform gives the posterior mean
+        z_mean = fa.transform(data_trans)
+        Ih = np.eye(len(fa.components_))
+
+        # W is n_components by n_features, code below from sklearn implementation
+        Wpsi = fa.components_ / fa.noise_variance_
+        z_cov = linalg.inv(Ih + np.dot(Wpsi, fa.components_.T))
+
+        # sample z's
+        z_samples = np.random.multivariate_normal(
+                    np.zeros(data_trans.shape[1], dtype=np.float32),
+                    cov=z_cov,
+                    size=(data_trans.shape[0], n_samples),
+        )
+
+        # cells by n_components by posterior samples
+        z_samples = np.swapaxes(z_samples, 1, 2)
+
+        # add mean to all samples
+        z_samples += z_mean[:, :, np.newaxis]
+
+        x_samples = np.zeros(
+                    (data_trans.shape[0], data_trans.shape[1], n_samples),
+                    dtype=np.float32,
+        )
+
+        for i in range(n_samples):
+            x_mean = np.matmul(z_samples[:, :, i], fa.components_)
+            x_sample = np.random.normal(x_mean, scale=np.sqrt(fa.noise_variance_))
+            # add back feature means
+            x_samples[:, :, i] = x_sample + fa.mean_
+
+        reconstruction = x_samples
+
+        reconstruction_array = xr.DataArray(reconstruction, dims = ['cells', 'features', 'samples'])
+        self.samples_dataset[FA_VAR] = reconstruction_array
+        self.models[FA_VAR] = [FA_VAR]
+
 
     def coefficient_of_variation(self, dim: Dims = "cells") -> None:
         """
@@ -102,6 +165,24 @@ class PosteriorPredictiveCheck(PosteriorPredictiveCheck):
         std_mean = std.mean(dim="samples", skipna=True)
         std_mean[DATA_VAR_RAW].data = np.nan_to_num(std_mean[DATA_VAR_RAW].data)
         self.metrics[identifier] = std_mean.to_dataframe()
+
+    def compute_metrics(self, metric: Literal["all", "cv", "mean", "std"] = "all") -> None:
+        """Compute metrics for each model."""
+        if metric == "all":
+            metrics = ["cv", "mean", "std"]
+        elif isinstance(metric, str):
+            metrics = [metric]
+
+        for metric_oi in metrics:
+            if metric_oi == "cv":
+                self.coefficient_of_variation("cells")
+                self.coefficient_of_variation("features")
+            elif metric_oi == "mean":
+                self.mean("cells")
+                self.mean("features")
+            elif metric_oi == "std":
+                self.std("cells")
+                self.std("features")
 
     def compute_summary_statistics(self, metric="all") -> None:
         """Compute summary statistics for each model and metric."""
