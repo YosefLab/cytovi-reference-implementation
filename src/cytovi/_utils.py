@@ -1,4 +1,5 @@
 from anndata import AnnData
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
 def check_marker(adata: AnnData, marker: list[str]):
@@ -17,3 +18,10 @@ def check_layer_key(adata: AnnData, layer_key: str):
     if layer_key is not None:
         if layer_key not in adata.layers:
             raise ValueError(f"Layer key {layer_key} not found in adata.layers.")
+
+def apply_scaling(data, method, feature_range):
+    if method == "minmax":
+        scaler = MinMaxScaler(feature_range=feature_range)
+    elif method == "standard":
+            scaler = StandardScaler()
+    return scaler.fit_transform(data), scaler
