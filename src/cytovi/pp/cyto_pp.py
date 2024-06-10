@@ -1,13 +1,13 @@
 import warnings
-from typing import Optional
+from typing import Literal, Optional
 
 import anndata as ad
 import numpy as np
 from anndata import AnnData
 from scvi import settings
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-from cytovi._utils import check_layer_key, check_marker
+from cytovi._utils import apply_scaling, check_layer_key, check_marker
 
 
 def arcsinh(
@@ -108,31 +108,61 @@ def logp(
 
 def scale(
     adata: AnnData,
+    method: Literal['minmax', 'standard'] = "minmax",
     feature_range: tuple[float, float] = (0.0, 1.0),
     transformed_layer_key: str = "transformed",
     scaled_layer_key: str = "scaled",
+    batch_key: str = None,
     feat_eps: float = 1e-6,
     inplace: bool = True,
 ) -> Optional[AnnData]:
     """
-    Apply min-max scaling to the transformed layer of an AnnData object.
+    Apply scaling to the transformed layer of an AnnData object.
 
     Parameters
     ----------
-        adata (AnnData): The AnnData object to scale.
-        feature_range (Tuple[float, float]): The desired range of the scaled data.
-        transformed_layer_key (str): The key of the transformed layer.
-        scaled_layer_key (str): The key to store the scaled data in `adata.layers`.
-        inplace (bool): If True, the scaling is applied in place. If False, a new AnnData object is returned.
+    adata : AnnData
+        The AnnData object to scale.
+    method : Literal['minmax', 'standard']
+        The scaling method to use. Either 'minmax' or 'standard'.
+    feature_range : Tuple[float, float]
+        The desired range of the scaled data for min-max scaling.
+    transformed_layer_key : str
+        The key of the transformed layer in `adata.layers`.
+    scaled_layer_key : str
+        The key to store the scaled data in `adata.layers`.
+    batch_key : str, optional
+        The key for batch information in `adata.obs`. If provided, scaling is done per batch.
+    feat_eps : float
+        Small epsilon to adjust the feature range and avoid division by zero.
+    inplace : bool
+        If True, the scaling is applied in place. If False, a new AnnData object is returned.
 
     Returns
     -------
-        Optional[AnnData]: If inplace is False, returns the scaled AnnData object. Otherwise, returns None.
+    Optional[AnnData]
+        If inplace is False, returns the scaled AnnData object. Otherwise, returns None.
     """
     check_layer_key(adata, transformed_layer_key)
     feature_range = (feature_range[0] + feat_eps, feature_range[1] - feat_eps)
-    scaler = MinMaxScaler(feature_range=feature_range)
-    adata.layers[scaled_layer_key] = scaler.fit_transform(adata.layers[transformed_layer_key].copy())
+
+    if batch_key:
+        batches = adata.obs[batch_key].unique()
+        adata_list = []
+        idx = adata.obs_names
+
+        for batch in batches:
+            adata_batch = adata[adata.obs[batch_key] == batch].copy()
+            scaled_data, _ = apply_scaling(adata_batch.layers[transformed_layer_key].copy(), method, feature_range)
+            adata_batch.layers[scaled_layer_key] = scaled_data
+            adata_list.append(adata_batch)
+        adata_temp = ad.concat(adata_list, join="outer")
+        adata_temp = adata_temp[idx].copy()
+        scaled_data = adata_temp.layers[scaled_layer_key].copy()
+        adata.layers[scaled_layer_key] = scaled_data
+    else:
+        scaled_data, scaler = apply_scaling(adata.layers[transformed_layer_key].copy(), method, feature_range)
+        adata.layers[scaled_layer_key] = scaled_data
 
     # scaler_params = {"feature_range": scaler.feature_range, "scale_": scaler.scale_, "min_": scaler.min_}
     # adata.uns["scaler_params"] = scaler_params # this should be added to adata.uns but needs a fix with adata saving issues
@@ -161,6 +191,7 @@ def register_nan_layer(
         Optional[AnnData]: If inplace is False, returns the processed AnnData object. Otherwise, returns None.
     """
     check_layer_key(adata, scaled_layer_key)
+
     # add mask layer and replace nans by zero
     adata.layers[mask_layer_key] = np.ones_like(adata.layers[scaled_layer_key])
     adata.layers[mask_layer_key][np.isnan(adata.layers[scaled_layer_key])] = 0

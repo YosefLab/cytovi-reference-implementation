@@ -119,7 +119,7 @@ class CytoVI(
         n_batch = self.summary_stats.n_batch
 
 
-        self._model_summary_string = (
+        self._model_summary_string = (  # noqa: UP032
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
             "{}, protein_likelihood: {}, latent_distribution: {}, n_proteins: {}"
         ).format(
@@ -236,7 +236,7 @@ class CytoVI(
         check_val_every_n_epoch: Optional[int] = None,
         # reduce_lr_on_plateau: bool = True,
         n_steps_kl_warmup: Union[int, None] = None,
-        n_epochs_kl_warmup: Union[int, None] = None,
+        n_epochs_kl_warmup: Union[int, None] = 400, # note: explore optimal kl warmup
         adversarial_classifier: Optional[bool] = False,
         plan_kwargs: Optional[dict] = None,
         **kwargs,
