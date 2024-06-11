@@ -117,6 +117,7 @@ class CytoVAE(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.encode_backbone_only = encode_backbone_only
         self.backbone_marker_mask = backbone_marker_mask
+        self.prior_mixture = prior_mixture
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -166,8 +167,7 @@ class CytoVAE(BaseModuleClass):
             **_extra_decoder_kwargs,
         )
 
-        if prior_mixture:
-            self.prior_mixture = prior_mixture
+        if self.prior_mixture is True:
             self.prior_means = torch.nn.Parameter(0.01 * torch.randn([prior_mixture_k, n_latent]))
             self.prior_log_scales = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
             self.prior_logits = torch.nn.Parameter(torch.zeros([prior_mixture_k]))
@@ -285,7 +285,7 @@ class CytoVAE(BaseModuleClass):
         elif self.protein_likelihood == "beta":
             px = Beta(concentration1=px_param1, concentration0=px_param2)
 
-        if self.prior_mixture:
+        if self.prior_mixture is True:
             cats = Categorical(logits = self.prior_logits)
             normal_dists = Independent(
                 Normal(self.prior_means, torch.exp(self.prior_log_scales) + 1e-4),
@@ -315,11 +315,11 @@ class CytoVAE(BaseModuleClass):
         else:
             nan_mask = None
 
-        if self.prior_mixture:
-            z = inference_outputs['qz'].rsample(sample_shape = (30, ))
+        if self.prior_mixture is True:
+            # z = inference_outputs['qz'].rsample()
+            z = inference_outputs['qz'].rsample(sample_shape = (10, ))  # sample multiple times, was 30
             # sample x n_obs x n_latent
             kl_divergence_z = - (generative_outputs["pz"].log_prob(z) - inference_outputs["qz"].log_prob(z).sum(-1)).mean(0)
-            # kl_divergence_z = kl_divergence_z.sum(-1) # mean(0) neccessary here
 
         # kl_u = "qu".log_prob("u") - "pu".log_prob('u')
         #     kl_u = kl_u.sum(-1)
