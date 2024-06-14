@@ -106,7 +106,9 @@ class CytoVI(
         dropout_rate: float = 0.1,
         protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
-        encode_backbone_only: bool = False,
+        encode_backbone_only: Optional [bool] = False,
+        prior_mixture: Optional[bool] = False,
+        prior_mixture_k: int = 20,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -161,6 +163,8 @@ class CytoVI(
             latent_distribution=latent_distribution,
             encode_backbone_only=encode_backbone_only,
             backbone_marker_mask=self.backbone_marker_mask,
+            prior_mixture = prior_mixture,
+            prior_mixture_k = prior_mixture_k,
             **model_kwargs,
         )
 

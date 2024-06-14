@@ -9,7 +9,7 @@ from scvi._types import Tunable
 from scvi.module.base import BaseModuleClass, LossOutput, auto_move_data
 from scvi.nn import Encoder, FCLayers
 from torch import logsumexp, nn
-from torch.distributions import Beta, Normal
+from torch.distributions import Beta, Categorical, Independent, MixtureSameFamily, Normal
 from torch.distributions import kl_divergence as kl
 
 from ._constants import REGISTRY_KEYS
@@ -103,6 +103,8 @@ class CytoVAE(BaseModuleClass):
         extra_encoder_kwargs: Optional[dict] = None,
         extra_decoder_kwargs: Optional[dict] = None,
         scale_activation: Optional[Literal["softplus", None]] = None,
+        prior_mixture: Optional[bool] = False,
+        prior_mixture_k: int = 20,
 
     ):
         super().__init__()
@@ -115,6 +117,7 @@ class CytoVAE(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.encode_backbone_only = encode_backbone_only
         self.backbone_marker_mask = backbone_marker_mask
+        self.prior_mixture = prior_mixture
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -163,6 +166,11 @@ class CytoVAE(BaseModuleClass):
             protein_likelihood=protein_likelihood,
             **_extra_decoder_kwargs,
         )
+
+        if self.prior_mixture is True:
+            self.prior_means = torch.nn.Parameter(0.01 * torch.randn([prior_mixture_k, n_latent]))
+            self.prior_log_scales = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
+            self.prior_logits = torch.nn.Parameter(torch.zeros([prior_mixture_k]))
 
     def _get_inference_input(
         self,
@@ -277,7 +285,16 @@ class CytoVAE(BaseModuleClass):
         elif self.protein_likelihood == "beta":
             px = Beta(concentration1=px_param1, concentration0=px_param2)
 
-        pz = Normal(torch.zeros_like(z), torch.ones_like(z))
+        if self.prior_mixture is True:
+            cats = Categorical(logits = self.prior_logits)
+            normal_dists = Independent(
+                Normal(self.prior_means, torch.exp(self.prior_log_scales) + 1e-4),
+                    reinterpreted_batch_ndims = 1
+                )
+            pz = MixtureSameFamily(cats, normal_dists)
+        else:
+            pz = Normal(torch.zeros_like(z), torch.ones_like(z))
+
         return {
             "px": px,
             "pz": pz,
@@ -298,7 +315,13 @@ class CytoVAE(BaseModuleClass):
         else:
             nan_mask = None
 
-        kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=1)
+        if self.prior_mixture is True:
+            z = inference_outputs['qz'].rsample(sample_shape = (10, ))
+            # sample x n_obs x n_latent
+            kl_divergence_z = - (generative_outputs["pz"].log_prob(z) - inference_outputs["qz"].log_prob(z).sum(-1)).mean(0)
+
+        else:
+            kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=1)
 
         reconst_loss_int = -generative_outputs["px"].log_prob(x)
 
