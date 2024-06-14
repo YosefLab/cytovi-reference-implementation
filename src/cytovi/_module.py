@@ -316,16 +316,9 @@ class CytoVAE(BaseModuleClass):
             nan_mask = None
 
         if self.prior_mixture is True:
-            # z = inference_outputs['qz'].rsample()
-            z = inference_outputs['qz'].rsample(sample_shape = (10, ))  # sample multiple times, was 30
+            z = inference_outputs['qz'].rsample(sample_shape = (10, ))
             # sample x n_obs x n_latent
             kl_divergence_z = - (generative_outputs["pz"].log_prob(z) - inference_outputs["qz"].log_prob(z).sum(-1)).mean(0)
-
-        # kl_u = "qu".log_prob("u") - "pu".log_prob('u')
-        #     kl_u = kl_u.sum(-1)
-
-            # destvi2
-            # kl_divergence_z = - (prior.log_prob(u) - qz.log_prob(u).sum(-1)).mean(0)
 
         else:
             kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=1)
