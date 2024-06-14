@@ -104,7 +104,7 @@ class CytoVAE(BaseModuleClass):
         extra_decoder_kwargs: Optional[dict] = None,
         scale_activation: Optional[Literal["softplus", None]] = None,
         prior_mixture: Optional[bool] = False,
-        prior_mixture_k: int = 10,
+        prior_mixture_k: int = 20,
 
     ):
         super().__init__()
