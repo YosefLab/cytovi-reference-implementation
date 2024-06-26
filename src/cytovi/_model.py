@@ -237,7 +237,7 @@ class CytoVI(
     @devices_dsp.dedent
     def train(
         self,
-        max_epochs: Optional[int] = None,
+        max_epochs: Optional[int] = 1000,
         lr: float = 1e-3,
         accelerator: str = "auto",
         devices: Union[int, list[int], str] = "auto",
@@ -245,13 +245,14 @@ class CytoVI(
         validation_size: Optional[float] = None,
         shuffle_set_split: bool = True,
         batch_size: int = 128,
-        early_stopping: bool = False,
+        early_stopping: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
         # reduce_lr_on_plateau: bool = True,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400, # note: explore optimal kl warmup
         adversarial_classifier: Optional[bool] = None,
         plan_kwargs: Optional[dict] = None,
+        # early_stopping_patience: Optional[int] = None,
         **kwargs,
     ):
         """Trains the model using amortized variational inference.
@@ -323,9 +324,6 @@ class CytoVI(
         else:
             plan_kwargs = update_dict
 
-        # if max_epochs is None:
-        #     max_epochs = get_max_epochs_heuristic(self.adata.n_obs)
-
         plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else {}
 
         data_splitter = self._data_splitter_cls(
@@ -345,7 +343,8 @@ class CytoVI(
             accelerator=accelerator,
             devices=devices,
             early_stopping=early_stopping,
-            # check_val_every_n_epoch=check_val_every_n_epoch,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            # early_stopping_patience=early_stopping_patience,
             **kwargs,
         )
         return runner()
