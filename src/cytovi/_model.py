@@ -106,7 +106,7 @@ class CytoVI(
         dropout_rate: float = 0.1,
         protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
-        encode_backbone_only: Optional [bool] = False,
+        encode_backbone_only: Optional [bool] = None,
         prior_mixture: Optional[bool] = True,
         prior_mixture_k: int = 20,
         **model_kwargs,
@@ -143,11 +143,20 @@ class CytoVI(
             self.backbone_marker_mask = all_markers.isin(backbone_markers)
             backbone_str = ", ".join(backbone_markers)
             self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}, \nBackbone markers: {backbone_str}")
+            self._use_adversarial_classifier = True
+
+            if encode_backbone_only is None:
+                encode_backbone_only = True
+
         else:
             self.backbone_markers = None
             self.backbone_marker_mask = None
             self.nan_imputation = False
             self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}")
+            self._use_adversarial_classifier = False
+            encode_backbone_only = False
+
+
 
         self.module = self._module_cls(
             n_input=self.summary_stats.n_vars,
@@ -241,7 +250,7 @@ class CytoVI(
         # reduce_lr_on_plateau: bool = True,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400, # note: explore optimal kl warmup
-        adversarial_classifier: Optional[bool] = False,
+        adversarial_classifier: Optional[bool] = None,
         plan_kwargs: Optional[dict] = None,
         **kwargs,
     ):
@@ -291,8 +300,9 @@ class CytoVI(
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
-        # if adversarial_classifier is None:
-        #     adversarial_classifier = self._use_adversarial_classifier
+        if adversarial_classifier is None:
+            adversarial_classifier = self._use_adversarial_classifier
+
         # n_steps_kl_warmup = (
         #     n_steps_kl_warmup
         #     if n_steps_kl_warmup is not None

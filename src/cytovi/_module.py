@@ -98,12 +98,12 @@ class CytoVAE(BaseModuleClass):
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
         use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
         var_activation: Optional[Callable] = None,
-        encode_backbone_only: Optional[bool] = False,
+        encode_backbone_only: Optional[bool] = None,
         backbone_marker_mask: Optional[list] = None,
         extra_encoder_kwargs: Optional[dict] = None,
         extra_decoder_kwargs: Optional[dict] = None,
         scale_activation: Optional[Literal["softplus", None]] = None,
-        prior_mixture: Optional[bool] = False,
+        prior_mixture: Optional[bool] = True,
         prior_mixture_k: int = 20,
 
     ):
