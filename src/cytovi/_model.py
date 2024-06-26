@@ -107,7 +107,7 @@ class CytoVI(
         protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
         encode_backbone_only: Optional [bool] = False,
-        prior_mixture: Optional[bool] = False,
+        prior_mixture: Optional[bool] = True,
         prior_mixture_k: int = 20,
         **model_kwargs,
     ):
