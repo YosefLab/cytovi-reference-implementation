@@ -123,7 +123,7 @@ class CytoVI(
 
         self._model_summary_string = (  # noqa: UP032
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
-            "{}, protein_likelihood: {}, latent_distribution: {}, n_proteins: {}"
+            "{}, \nprotein_likelihood: {}, latent_distribution: {}, \nn_proteins: {}"
         ).format(
             n_hidden,
             n_latent,
@@ -249,10 +249,10 @@ class CytoVI(
         check_val_every_n_epoch: Optional[int] = None,
         # reduce_lr_on_plateau: bool = True,
         n_steps_kl_warmup: Union[int, None] = None,
-        n_epochs_kl_warmup: Union[int, None] = 400, # note: explore optimal kl warmup
+        n_epochs_kl_warmup: Union[int, None] = 400,
         adversarial_classifier: Optional[bool] = None,
         plan_kwargs: Optional[dict] = None,
-        # early_stopping_patience: Optional[int] = None,
+        early_stopping_patience: Optional[int] = 30,
         **kwargs,
     ):
         """Trains the model using amortized variational inference.
@@ -344,7 +344,7 @@ class CytoVI(
             devices=devices,
             early_stopping=early_stopping,
             check_val_every_n_epoch=check_val_every_n_epoch,
-            # early_stopping_patience=early_stopping_patience,
+            early_stopping_patience=early_stopping_patience,
             **kwargs,
         )
         return runner()
