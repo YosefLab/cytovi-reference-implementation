@@ -26,6 +26,7 @@ from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import CytoVAE
+from ._utils import get_n_latent_heuristic
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ class CytoVI(
         self,
         adata: AnnData,
         n_hidden: int = 128,
-        n_latent: int = 10,
+        n_latent: Optional [int] = None,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         protein_likelihood: Literal["normal", "beta"] = "normal",
@@ -120,20 +121,6 @@ class CytoVI(
         )
         n_batch = self.summary_stats.n_batch
 
-
-        self._model_summary_string = (  # noqa: UP032
-            "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
-            "{}, \nprotein_likelihood: {}, latent_distribution: {}, \nn_proteins: {}"
-        ).format(
-            n_hidden,
-            n_latent,
-            n_layers,
-            dropout_rate,
-            protein_likelihood,
-            latent_distribution,
-            self.summary_stats.n_vars,
-        )
-
         if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
             nan_layer = self.adata_manager.get_from_registry("nan_layer")
             all_markers = adata.var_names
@@ -142,7 +129,6 @@ class CytoVI(
             self.nan_imputation = True
             self.backbone_marker_mask = all_markers.isin(backbone_markers)
             backbone_str = ", ".join(backbone_markers)
-            self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}, \nBackbone markers: {backbone_str}")
             self._use_adversarial_classifier = True
 
             if encode_backbone_only is None:
@@ -152,11 +138,33 @@ class CytoVI(
             self.backbone_markers = None
             self.backbone_marker_mask = None
             self.nan_imputation = False
-            self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}")
             self._use_adversarial_classifier = False
             encode_backbone_only = False
 
+        if n_latent is None:
+            if encode_backbone_only is True:
+                n_vars_encoded = self.backbone_marker_mask.sum()
+            else:
+                n_vars_encoded = self.summary_stats.n_vars
+            n_latent = get_n_latent_heuristic(n_vars_encoded)
 
+
+        self._model_summary_string = (  # noqa: UP032
+            "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
+            "{}, \nprotein_likelihood: {}, latent_distribution: {}, \nn_proteins: {}, , Impute missing markers: {}"
+        ).format(
+            n_hidden,
+            n_latent,
+            n_layers,
+            dropout_rate,
+            protein_likelihood,
+            latent_distribution,
+            self.summary_stats.n_vars,
+            self.nan_imputation
+        )
+
+        if self.nan_imputation is True:
+            self._model_summary_string += (f", \nBackbone markers: {backbone_str}")
 
         self.module = self._module_cls(
             n_input=self.summary_stats.n_vars,

@@ -25,3 +25,14 @@ def apply_scaling(data, method, feature_range):
     elif method == "standard":
             scaler = StandardScaler()
     return scaler.fit_transform(data), scaler
+
+def get_n_latent_heuristic(n_vars: int, latent_max: int = 20, latent_min: int = 10):
+    n_latent = round(n_vars/2)
+
+    if n_latent > latent_max:
+        n_latent = latent_max
+
+    if n_latent < latent_min:
+        n_latent = latent_min
+
+    return n_latent
