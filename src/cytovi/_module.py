@@ -318,7 +318,7 @@ class CytoVAE(BaseModuleClass):
         if self.prior_mixture is True:
             z = inference_outputs['qz'].rsample(sample_shape = (10, ))
             # sample x n_obs x n_latent
-            kl_divergence_z = - (generative_outputs["pz"].log_prob(z) - inference_outputs["qz"].log_prob(z).sum(-1)).mean(0)
+            kl_divergence_z = (inference_outputs["qz"].log_prob(z).sum(-1) - generative_outputs["pz"].log_prob(z)).mean(0)
 
         else:
             kl_divergence_z = kl(inference_outputs["qz"], generative_outputs["pz"]).sum(dim=1)
