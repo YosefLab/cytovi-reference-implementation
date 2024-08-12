@@ -98,8 +98,7 @@ class CytoVAE(BaseModuleClass):
         use_batch_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "both",
         use_layer_norm: Tunable[Literal["encoder", "decoder", "none", "both"]] = "none",
         var_activation: Optional[Callable] = None,
-        encode_backbone_only: Optional[bool] = None,
-        backbone_marker_mask: Optional[list] = None,
+        encoder_marker_mask: Optional[list] = None,
         extra_encoder_kwargs: Optional[dict] = None,
         extra_decoder_kwargs: Optional[dict] = None,
         scale_activation: Optional[Literal["softplus", None]] = None,
@@ -115,8 +114,7 @@ class CytoVAE(BaseModuleClass):
         self.n_labels = n_labels
         self.latent_distribution = latent_distribution
         self.encode_covariates = encode_covariates
-        self.encode_backbone_only = encode_backbone_only
-        self.backbone_marker_mask = backbone_marker_mask
+        self.encoder_marker_mask = encoder_marker_mask
         self.prior_mixture = prior_mixture
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
@@ -126,8 +124,8 @@ class CytoVAE(BaseModuleClass):
 
         # z encoder goes from the n_input-dimensional data to an n_latent-d
         # latent space representation
-        if encode_backbone_only is True:
-            n_input_encoder = backbone_marker_mask.sum() + n_continuous_cov * encode_covariates
+        if encoder_marker_mask is not None:
+            n_input_encoder = encoder_marker_mask.sum() + n_continuous_cov * encode_covariates
         else:
             n_input_encoder = n_input + n_continuous_cov * encode_covariates
 
@@ -186,8 +184,8 @@ class CytoVAE(BaseModuleClass):
 
         x = tensors[REGISTRY_KEYS.X_KEY]
 
-        if self.encode_backbone_only is True:
-            x_ = x[..., self.backbone_marker_mask]
+        if self.encoder_marker_mask is not None:
+            x_ = x[..., self.encoder_marker_mask]
         else:
             x_ = x
         input_dict = {

@@ -26,7 +26,7 @@ from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import CytoVAE
-from ._utils import get_n_latent_heuristic
+from ._utils import check_marker, get_n_latent_heuristic
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +108,7 @@ class CytoVI(
         protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
         encode_backbone_only: Optional [bool] = None,
+        encoder_marker_list: Optional [list] = None,
         prior_mixture: Optional[bool] = True,
         prior_mixture_k: int = 20,
         **model_kwargs,
@@ -120,10 +121,18 @@ class CytoVI(
             else None
         )
         n_batch = self.summary_stats.n_batch
+        all_markers = adata.var_names
+
+        if encoder_marker_list is not None:
+            check_marker(adata, encoder_marker_list)
+            encode_backbone_only = False
+            encoder_marker_mask = all_markers.isin(encoder_marker_list)
+        else:
+            encoder_marker_mask = None
 
         if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
             nan_layer = self.adata_manager.get_from_registry("nan_layer")
-            all_markers = adata.var_names
+
             backbone_markers = list(all_markers[~np.any(nan_layer == 0, axis=0)])
             self.backbone_markers = backbone_markers
             self.nan_imputation = True
@@ -134,16 +143,18 @@ class CytoVI(
             if encode_backbone_only is None:
                 encode_backbone_only = True
 
+            if encode_backbone_only:
+                encoder_marker_mask = self.backbone_marker_mask
+
         else:
             self.backbone_markers = None
             self.backbone_marker_mask = None
             self.nan_imputation = False
             self._use_adversarial_classifier = False
-            encode_backbone_only = False
 
         if n_latent is None:
-            if encode_backbone_only is True:
-                n_vars_encoded = self.backbone_marker_mask.sum()
+            if encoder_marker_mask is not None:
+                n_vars_encoded = encoder_marker_mask.sum()
             else:
                 n_vars_encoded = self.summary_stats.n_vars
             n_latent = get_n_latent_heuristic(n_vars_encoded)
@@ -178,8 +189,7 @@ class CytoVI(
             dropout_rate=dropout_rate,
             protein_likelihood=protein_likelihood,
             latent_distribution=latent_distribution,
-            encode_backbone_only=encode_backbone_only,
-            backbone_marker_mask=self.backbone_marker_mask,
+            encoder_marker_mask=encoder_marker_mask,
             prior_mixture = prior_mixture,
             prior_mixture_k = prior_mixture_k,
             **model_kwargs,
