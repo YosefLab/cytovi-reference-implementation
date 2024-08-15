@@ -26,6 +26,7 @@ from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import CytoVAE
+from ._utils import check_marker, get_n_latent_heuristic
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +102,14 @@ class CytoVI(
         self,
         adata: AnnData,
         n_hidden: int = 128,
-        n_latent: int = 10,
+        n_latent: Optional [int] = None,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
-        encode_backbone_only: Optional [bool] = False,
-        prior_mixture: Optional[bool] = False,
+        encode_backbone_only: Optional [bool] = None,
+        encoder_marker_list: Optional [list] = None,
+        prior_mixture: Optional[bool] = True,
         prior_mixture_k: int = 20,
         **model_kwargs,
     ):
@@ -119,11 +121,48 @@ class CytoVI(
             else None
         )
         n_batch = self.summary_stats.n_batch
+        all_markers = adata.var_names
+
+        if encoder_marker_list is not None:
+            check_marker(adata, encoder_marker_list)
+            encode_backbone_only = False
+            encoder_marker_mask = all_markers.isin(encoder_marker_list)
+        else:
+            encoder_marker_mask = None
+
+        if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
+            nan_layer = self.adata_manager.get_from_registry("nan_layer")
+
+            backbone_markers = list(all_markers[~np.any(nan_layer == 0, axis=0)])
+            self.backbone_markers = backbone_markers
+            self.nan_imputation = True
+            self.backbone_marker_mask = all_markers.isin(backbone_markers)
+            backbone_str = ", ".join(backbone_markers)
+            self._use_adversarial_classifier = True
+
+            if encode_backbone_only is None:
+                encode_backbone_only = True
+
+            if encode_backbone_only:
+                encoder_marker_mask = self.backbone_marker_mask
+
+        else:
+            self.backbone_markers = None
+            self.backbone_marker_mask = None
+            self.nan_imputation = False
+            self._use_adversarial_classifier = False
+
+        if n_latent is None:
+            if encoder_marker_mask is not None:
+                n_vars_encoded = encoder_marker_mask.sum()
+            else:
+                n_vars_encoded = self.summary_stats.n_vars
+            n_latent = get_n_latent_heuristic(n_vars_encoded)
 
 
         self._model_summary_string = (  # noqa: UP032
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
-            "{}, protein_likelihood: {}, latent_distribution: {}, n_proteins: {}"
+            "{}, \nprotein_likelihood: {}, latent_distribution: {}, \nn_proteins: {}, , Impute missing markers: {}"
         ).format(
             n_hidden,
             n_latent,
@@ -132,22 +171,11 @@ class CytoVI(
             protein_likelihood,
             latent_distribution,
             self.summary_stats.n_vars,
+            self.nan_imputation
         )
 
-        if REGISTRY_KEYS.PROTEIN_NAN_MASK in self.adata_manager.data_registry:
-            nan_layer = self.adata_manager.get_from_registry("nan_layer")
-            all_markers = adata.var_names
-            backbone_markers = list(all_markers[~np.any(nan_layer == 0, axis=0)])
-            self.backbone_markers = backbone_markers
-            self.nan_imputation = True
-            self.backbone_marker_mask = all_markers.isin(backbone_markers)
-            backbone_str = ", ".join(backbone_markers)
-            self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}, \nBackbone markers: {backbone_str}")
-        else:
-            self.backbone_markers = None
-            self.backbone_marker_mask = None
-            self.nan_imputation = False
-            self._model_summary_string += (f", Impute missing markers: {self.nan_imputation}")
+        if self.nan_imputation is True:
+            self._model_summary_string += (f", \nBackbone markers: {backbone_str}")
 
         self.module = self._module_cls(
             n_input=self.summary_stats.n_vars,
@@ -161,8 +189,7 @@ class CytoVI(
             dropout_rate=dropout_rate,
             protein_likelihood=protein_likelihood,
             latent_distribution=latent_distribution,
-            encode_backbone_only=encode_backbone_only,
-            backbone_marker_mask=self.backbone_marker_mask,
+            encoder_marker_mask=encoder_marker_mask,
             prior_mixture = prior_mixture,
             prior_mixture_k = prior_mixture_k,
             **model_kwargs,
@@ -228,7 +255,7 @@ class CytoVI(
     @devices_dsp.dedent
     def train(
         self,
-        max_epochs: Optional[int] = None,
+        max_epochs: Optional[int] = 1000,
         lr: float = 1e-3,
         accelerator: str = "auto",
         devices: Union[int, list[int], str] = "auto",
@@ -236,13 +263,14 @@ class CytoVI(
         validation_size: Optional[float] = None,
         shuffle_set_split: bool = True,
         batch_size: int = 128,
-        early_stopping: bool = False,
+        early_stopping: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
         # reduce_lr_on_plateau: bool = True,
         n_steps_kl_warmup: Union[int, None] = None,
-        n_epochs_kl_warmup: Union[int, None] = 400, # note: explore optimal kl warmup
-        adversarial_classifier: Optional[bool] = False,
+        n_epochs_kl_warmup: Union[int, None] = 400,
+        adversarial_classifier: Optional[bool] = None,
         plan_kwargs: Optional[dict] = None,
+        early_stopping_patience: Optional[int] = 30,
         **kwargs,
     ):
         """Trains the model using amortized variational inference.
@@ -291,8 +319,9 @@ class CytoVI(
         **kwargs
             Other keyword args for :class:`~scvi.train.Trainer`.
         """
-        # if adversarial_classifier is None:
-        #     adversarial_classifier = self._use_adversarial_classifier
+        if adversarial_classifier is None:
+            adversarial_classifier = self._use_adversarial_classifier
+
         # n_steps_kl_warmup = (
         #     n_steps_kl_warmup
         #     if n_steps_kl_warmup is not None
@@ -313,9 +342,6 @@ class CytoVI(
         else:
             plan_kwargs = update_dict
 
-        # if max_epochs is None:
-        #     max_epochs = get_max_epochs_heuristic(self.adata.n_obs)
-
         plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else {}
 
         data_splitter = self._data_splitter_cls(
@@ -335,7 +361,8 @@ class CytoVI(
             accelerator=accelerator,
             devices=devices,
             early_stopping=early_stopping,
-            # check_val_every_n_epoch=check_val_every_n_epoch,
+            check_val_every_n_epoch=check_val_every_n_epoch,
+            early_stopping_patience=early_stopping_patience,
             **kwargs,
         )
         return runner()

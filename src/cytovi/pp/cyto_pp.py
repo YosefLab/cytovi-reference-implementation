@@ -1,5 +1,5 @@
 import warnings
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 import anndata as ad
 import numpy as np
@@ -7,7 +7,7 @@ from anndata import AnnData
 from scvi import settings
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-from cytovi._utils import apply_scaling, check_layer_key, check_marker
+from cytovi._utils import apply_scaling, check_group_by, check_layer_key, check_marker
 
 
 def arcsinh(
@@ -203,7 +203,7 @@ def register_nan_layer(
 
 
 def merge_batches(
-    adata_list: list[AnnData], mask_layer_key: str = "_nan_mask", scaled_layer_key: str = "scaled"
+    adata_list: list[AnnData], mask_layer_key: str = "_nan_mask", scaled_layer_key: str = "scaled", nan_layer_registration: bool = True,
 ) -> AnnData:
     """
     Merge batches of AnnData objects and handle missing markers.
@@ -239,9 +239,10 @@ def merge_batches(
         )
         warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 
-        adata = register_nan_layer(
-            adata, mask_layer_key=mask_layer_key, scaled_layer_key=scaled_layer_key, inplace=False
-        )
+        if nan_layer_registration: 
+            adata = register_nan_layer(
+                adata, mask_layer_key=mask_layer_key, scaled_layer_key=scaled_layer_key, inplace=False
+            )
 
         # register which markers are present in which batch
         for batch, adata_batch in enumerate(adata_list):
@@ -250,9 +251,6 @@ def merge_batches(
             adata.var[batch_name] = all_markers.isin(batch_markers.intersection(all_markers))
 
     adata.obs_names_make_unique()
-    # note: find a way to combine scaling parameters from different batches
-    # write scaling params for arcsinh transformation
-    # also write the reverse functions
 
     return adata
 
@@ -302,3 +300,49 @@ def subsample(
         adata_subsampled = adata[adata.obs.sample(n_obs, random_state=random_state, replace=replace).index, :].copy()
 
     return adata_subsampled
+
+
+def mask_markers(
+    adata: AnnData, markers: Union[str, list[str]], batch_key: str = 'batch', masked_batch: str = '1', nan_layer_registration: bool = True):
+    """
+    Mask specific markers in an AnnData object by removing them from a specific batch.
+
+    Parameters
+    ----------
+    adata : AnnData
+        The AnnData object to mask markers in.
+    markers : Union[str, list[str]]
+        The marker(s) to be masked. Can be a single marker as a string or a list of markers.
+    batch_key : str, optional
+        The key in `adata.obs` that represents the batch information, by default 'batch'.
+    masked_batch : str, optional
+        The batch in which the marker(s) should be masked, by default '1'.
+    nan_layer_registration : bool, optional
+        Whether to register a nan layer for imputation of missing proteins, by default True.
+
+    Returns
+    -------
+    AnnData
+        The masked AnnData object.
+    """
+    adata_list = []
+    idx = adata.obs_names
+
+    if isinstance(markers, str):
+        markers = [markers]
+
+    check_marker(adata, markers)
+    check_group_by(adata, batch_key)
+
+    for batch in adata.obs[batch_key].cat.categories:
+        adata_batch = adata[adata.obs[batch_key] == batch].copy()
+
+        if batch == masked_batch:
+            keep_columns = ~adata_batch.var_names.isin(markers)
+            adata_batch = adata_batch[:, keep_columns].copy()
+
+        adata_list.append(adata_batch)
+    adata_out = merge_batches(adata_list, nan_layer_registration=nan_layer_registration)
+    adata_out = adata_out[idx].copy()
+
+    return adata_out
