@@ -18,6 +18,7 @@ from scvi.data.fields import (
     NumericalJointObsField,
 )
 from scvi.dataloaders import DataSplitter
+from scvi.distributions._utils import DistributionConcatenator
 from scvi.model._utils import _get_batch_code_from_category
 from scvi.model.base import ArchesMixin, BaseModelClass, RNASeqMixin, UnsupervisedTrainingMixin, VAEMixin
 from scvi.train import AdversarialTrainingPlan, TrainRunner
@@ -434,13 +435,15 @@ class CytoVI(
         self,
         adata: Optional[AnnData] = None,
         indices: Optional[Sequence[int]] = None,
-        transform_batch: Optional[Sequence[Union[Number, str]]] = "all",
+        transform_batch: Optional[Sequence[Union[Number, str]]] = "all", # note: doublecheck this behaviour for DE
         protein_list: Optional[Sequence[str]] = None,
         n_samples: int = 1,
         n_samples_overall: int = None,
+        weights: Union[Literal["uniform", "importance"], None] = None,
         batch_size: Optional[int] = None,
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
+        **importance_weighting_kwargs,
     ) -> Union[np.ndarray, pd.DataFrame]:
         r"""Returns the normalized (decoded) protein expression.
 
@@ -486,10 +489,12 @@ class CytoVI(
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
         """
+        # notes for DE: storing the distribution is currently not possible when doing nan_imputation; this is only relevant for importance sampling;
+        # without importance sampling we still need to make sure that the nan_imputation does not mess with DE
         adata = self._validate_anndata(adata)
         all_batches = list(np.unique(self.adata_manager.get_from_registry("batch")))
 
-        if self.nan_imputation is True:
+        if self.nan_imputation is True: #show this warning only once per session
             msg = "detected missing proteins between batches - will impute missing markers"
             warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
             backbone_marker_mask=self.backbone_marker_mask
@@ -501,7 +506,8 @@ class CytoVI(
         if indices is None:
             indices = np.arange(adata.n_obs)
         if n_samples_overall is not None:
-            indices = np.random.choice(indices, n_samples_overall)
+            assert n_samples == 1  # default value
+            n_samples = n_samples_overall // len(indices) + 1
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
         if protein_list is None:
@@ -527,13 +533,22 @@ class CytoVI(
         else:
             decode_batches = transform_batch
 
+        store_distributions = weights == "importance"
+        if store_distributions and len(transform_batch) > 1:
+            raise NotImplementedError(
+                "Importance weights cannot be computed when expression levels are averaged across batches."
+            )
+
         exprs = []
+        zs = []
+        qz_store = DistributionConcatenator()
+        px_store = DistributionConcatenator()
         for tensors in scdl:
             per_batch_exprs = []
             for batch in decode_batches:
                 generative_kwargs = self._get_transform_batch_gen_kwargs(batch)
                 inference_kwargs = {"n_samples": n_samples}
-                _, generative_outputs = self.module.forward(
+                inference_outputs, generative_outputs = self.module.forward(
                     tensors=tensors,
                     inference_kwargs=inference_kwargs,
                     generative_kwargs=generative_kwargs,
@@ -564,7 +579,10 @@ class CytoVI(
                 output = output[..., protein_mask]
 
                 per_batch_exprs.append(output)
-
+                if store_distributions:
+                    qz_store.store_distribution(inference_outputs["qz"]) # in case of nan_imputation, this will be problematic since qz and px are stored for each batch separately
+                    px_store.store_distribution(generative_outputs["px"])
+            zs.append(inference_outputs["z"].cpu())
             per_batch_exprs = np.stack(per_batch_exprs)
 
             exprs += [np.nanmean(per_batch_exprs, axis=0)]
@@ -572,9 +590,32 @@ class CytoVI(
         if n_samples > 1:
             # The -2 axis correspond to cells.
             exprs = np.concatenate(exprs, axis=-2)
+            zs = torch.concat(zs, dim=-2)
         else:
             exprs = np.concatenate(exprs, axis=0)
-        if n_samples > 1 and return_mean:
+            zs = torch.concat(zs, dim=0)
+
+        if n_samples_overall is not None:
+            # Converts the 3d tensor to a 2d tensor
+            exprs = exprs.reshape(-1, exprs.shape[-1])
+            n_samples_ = exprs.shape[0]
+            if (weights is None) or weights == "uniform":
+                p = None
+            else:
+                qz = qz_store.get_concatenated_distributions(axis=0)
+                x_axis = 0 if n_samples == 1 else 1
+                px = px_store.get_concatenated_distributions(axis=x_axis)
+                p = self._get_importance_weights(
+                    adata,
+                    indices,
+                    qz=qz,
+                    px=px,
+                    zs=zs,
+                    **importance_weighting_kwargs,
+                )
+            ind_ = np.random.choice(n_samples_, n_samples_overall, p=p, replace=True)
+            exprs = exprs[ind_]
+        elif n_samples > 1 and return_mean:
             exprs = np.nanmean(exprs, axis=0)
 
         if return_numpy is None or return_numpy is False:
