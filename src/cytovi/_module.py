@@ -304,6 +304,8 @@ class CytoVAE(BaseModuleClass):
             pz = MixtureSameFamily(cats, normal_dists)
 
 
+
+
         else:
             pz = Normal(torch.zeros_like(z), torch.ones_like(z))
 
