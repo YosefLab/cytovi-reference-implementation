@@ -165,10 +165,17 @@ class CytoVAE(BaseModuleClass):
             **_extra_decoder_kwargs,
         )
 
+
         if self.prior_mixture is True:
-            self.prior_means = torch.nn.Parameter(0.01 * torch.randn([prior_mixture_k, n_latent]))
-            self.prior_log_scales = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
-            self.prior_logits = torch.nn.Parameter(torch.zeros([prior_mixture_k]))
+            self.prior_means = torch.nn.Parameter(0.01 * torch.randn([n_labels, prior_mixture_k, n_latent]))
+            self.prior_log_scales = torch.nn.Parameter(torch.zeros([n_labels, prior_mixture_k, n_latent]))
+            self.prior_logits = torch.nn.Parameter(torch.zeros([n_labels, prior_mixture_k]))
+
+        # if self.prior_mixture is True:
+        #     self.prior_means = torch.nn.Parameter(0.01 * torch.randn([prior_mixture_k, n_latent]))
+        #     self.prior_log_scales = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
+        #     self.prior_logits = torch.nn.Parameter(torch.zeros([prior_mixture_k]))
+
 
     def _get_inference_input(
         self,
@@ -278,18 +285,25 @@ class CytoVAE(BaseModuleClass):
             y,
         )
 
+
         if self.protein_likelihood == "normal":
             px = Normal(loc=px_param1, scale=px_param2)
         elif self.protein_likelihood == "beta":
             px = Beta(concentration1=px_param1, concentration0=px_param2)
 
         if self.prior_mixture is True:
-            cats = Categorical(logits = self.prior_logits)
+            y = y.ravel().long()
+            indexed_means = self.prior_means[y]
+            indexed_log_scales = self.prior_log_scales[y]
+            indexed_logits = self.prior_logits[y]
+            cats = Categorical(logits = indexed_logits)
             normal_dists = Independent(
-                Normal(self.prior_means, torch.exp(self.prior_log_scales) + 1e-4),
+                Normal(indexed_means, torch.exp(indexed_log_scales) + 1e-4),
                     reinterpreted_batch_ndims = 1
                 )
             pz = MixtureSameFamily(cats, normal_dists)
+
+
         else:
             pz = Normal(torch.zeros_like(z), torch.ones_like(z))
 
