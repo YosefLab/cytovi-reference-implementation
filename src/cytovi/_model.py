@@ -1,6 +1,7 @@
 import logging
 import warnings
 from collections.abc import Sequence
+from functools import partial
 from typing import Literal, Optional, Union
 
 import numpy as np
@@ -18,10 +19,12 @@ from scvi.data.fields import (
     NumericalJointObsField,
 )
 from scvi.dataloaders import DataSplitter
-from scvi.model._utils import _get_batch_code_from_category
+from scvi.distributions._utils import DistributionConcatenator
+from scvi.model._utils import _get_batch_code_from_category, scrna_raw_counts_properties
 from scvi.model.base import ArchesMixin, BaseModelClass, RNASeqMixin, UnsupervisedTrainingMixin, VAEMixin
+from scvi.model.base._utils import _de_core
 from scvi.train import AdversarialTrainingPlan, TrainRunner
-from scvi.utils import setup_anndata_dsp
+from scvi.utils import de_dsp, setup_anndata_dsp
 from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
@@ -438,9 +441,12 @@ class CytoVI(
         protein_list: Optional[Sequence[str]] = None,
         n_samples: int = 1,
         n_samples_overall: int = None,
+        weights: Union[Literal["uniform", "importance"], None] = None,
         batch_size: Optional[int] = None,
         return_mean: bool = True,
         return_numpy: Optional[bool] = None,
+        nan_warning: Optional[bool] = True,
+        **importance_weighting_kwargs,
     ) -> Union[np.ndarray, pd.DataFrame]:
         r"""Returns the normalized (decoded) protein expression.
 
@@ -486,14 +492,18 @@ class CytoVI(
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
         """
+        # notes for DE: storing the distribution is currently not possible when doing nan_imputation; this is only relevant for importance sampling;
+        # without importance sampling we still need to make sure that the nan_imputation does not mess with DE
         adata = self._validate_anndata(adata)
         all_batches = list(np.unique(self.adata_manager.get_from_registry("batch")))
 
         if self.nan_imputation is True:
-            msg = "detected missing proteins between batches - will impute missing markers"
-            warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
             backbone_marker_mask=self.backbone_marker_mask
             nan_imputation = True
+
+            if  nan_warning is True:
+                msg = "detected missing proteins between batches - will impute missing markers"
+                warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 
         else:
             nan_imputation = False
@@ -501,7 +511,8 @@ class CytoVI(
         if indices is None:
             indices = np.arange(adata.n_obs)
         if n_samples_overall is not None:
-            indices = np.random.choice(indices, n_samples_overall)
+            assert n_samples == 1  # default value
+            n_samples = n_samples_overall // len(indices) + 1
         scdl = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
 
         if protein_list is None:
@@ -527,13 +538,26 @@ class CytoVI(
         else:
             decode_batches = transform_batch
 
+        store_distributions = weights == "importance"
+        if store_distributions and len(transform_batch) > 1:
+            raise NotImplementedError(
+                "Importance weights cannot be computed when expression levels are averaged across batches."
+            )
+        if store_distributions and nan_imputation:
+            raise NotImplementedError(
+                "Importance weights cannot be computed when imputing missing markers."
+            )
+
         exprs = []
+        zs = []
+        qz_store = DistributionConcatenator()
+        px_store = DistributionConcatenator()
         for tensors in scdl:
             per_batch_exprs = []
             for batch in decode_batches:
                 generative_kwargs = self._get_transform_batch_gen_kwargs(batch)
                 inference_kwargs = {"n_samples": n_samples}
-                _, generative_outputs = self.module.forward(
+                inference_outputs, generative_outputs = self.module.forward(
                     tensors=tensors,
                     inference_kwargs=inference_kwargs,
                     generative_kwargs=generative_kwargs,
@@ -564,7 +588,10 @@ class CytoVI(
                 output = output[..., protein_mask]
 
                 per_batch_exprs.append(output)
-
+                if store_distributions:
+                    qz_store.store_distribution(inference_outputs["qz"])
+                    px_store.store_distribution(generative_outputs["px"])
+            zs.append(inference_outputs["z"].cpu())
             per_batch_exprs = np.stack(per_batch_exprs)
 
             exprs += [np.nanmean(per_batch_exprs, axis=0)]
@@ -572,9 +599,32 @@ class CytoVI(
         if n_samples > 1:
             # The -2 axis correspond to cells.
             exprs = np.concatenate(exprs, axis=-2)
+            zs = torch.concat(zs, dim=-2)
         else:
             exprs = np.concatenate(exprs, axis=0)
-        if n_samples > 1 and return_mean:
+            zs = torch.concat(zs, dim=0)
+
+        if n_samples_overall is not None:
+            # Converts the 3d tensor to a 2d tensor
+            exprs = exprs.reshape(-1, exprs.shape[-1])
+            n_samples_ = exprs.shape[0]
+            if (weights is None) or weights == "uniform":
+                p = None
+            else:
+                qz = qz_store.get_concatenated_distributions(axis=0)
+                x_axis = 0 if n_samples == 1 else 1
+                px = px_store.get_concatenated_distributions(axis=x_axis)
+                p = self._get_importance_weights(
+                    adata,
+                    indices,
+                    qz=qz,
+                    px=px,
+                    zs=zs,
+                    **importance_weighting_kwargs,
+                )
+            ind_ = np.random.choice(n_samples_, n_samples_overall, p=p, replace=True)
+            exprs = exprs[ind_]
+        elif n_samples > 1 and return_mean:
             exprs = np.nanmean(exprs, axis=0)
 
         if return_numpy is None or return_numpy is False:
@@ -585,3 +635,98 @@ class CytoVI(
             )
         else:
             return exprs
+
+    @de_dsp.dedent
+    def differential_expression(
+        self,
+        adata: Optional[AnnData] = None,
+        groupby: Optional[str] = None,
+        group1: Optional[list[str]] = None,
+        group2: Optional[list[str]] = None,
+        idx1: Union[list[int], list[bool], str, None] = None,
+        idx2: Union[list[int], list[bool], str, None] = None,
+        mode: Literal["vanilla", "change"] = "change",
+        delta: float = 0.25,
+        batch_size: Optional[int] = None,
+        all_stats: bool = False,
+        batch_correction: bool = False,
+        batchid1: Optional[list[str]] = None,
+        batchid2: Optional[list[str]] = None,
+        fdr_target: float = 0.05,
+        silent: bool = False,
+        weights: Union[Literal["uniform", "importance"], None] = "uniform",
+        filter_outlier_cells: bool = False,
+        importance_weighting_kwargs: Union[dict, None] = None,
+        **kwargs,
+    ) -> pd.DataFrame:
+        r"""A unified method for differential expression analysis.
+
+        Implements ``'vanilla'`` DE :cite:p:`Lopez18` and ``'change'`` mode DE :cite:p:`Boyeau19`.
+
+        Parameters
+        ----------
+        %(de_adata)s
+        %(de_groupby)s
+        %(de_group1)s
+        %(de_group2)s
+        %(de_idx1)s
+        %(de_idx2)s
+        %(de_mode)s
+        %(de_delta)s
+        %(de_batch_size)s
+        %(de_all_stats)s
+        %(de_batch_correction)s
+        %(de_batchid1)s
+        %(de_batchid2)s
+        %(de_fdr_target)s
+        %(de_silent)s
+        weights
+            Weights to use for sampling. If `None`, defaults to `"uniform"`.
+        filter_outlier_cells
+            Whether to filter outlier cells with :meth:`~scvi.model.base.DifferentialComputation.filter_outlier_cells`.
+        importance_weighting_kwargs
+            Keyword arguments passed into :meth:`~scvi.model.base.RNASeqMixin._get_importance_weights`.
+        **kwargs
+            Keyword args for :meth:`scvi.model.base.DifferentialComputation.get_bayes_factors`
+
+        Returns
+        -------
+        Differential expression DataFrame.
+        """
+        adata = self._validate_anndata(adata)
+        col_names = adata.var_names
+        importance_weighting_kwargs = importance_weighting_kwargs or {}
+        model_fn = partial(
+            self.get_normalized_expression,
+            return_numpy=True,
+            n_samples=1,
+            batch_size=batch_size,
+            weights=weights,
+            nan_warning = False,
+            **importance_weighting_kwargs,
+        )
+        representation_fn = self.get_latent_representation if filter_outlier_cells else None
+
+        result = _de_core(
+            self.get_anndata_manager(adata, required=True),
+            model_fn,
+            representation_fn,
+            groupby,
+            group1,
+            group2,
+            idx1,
+            idx2,
+            all_stats,
+            scrna_raw_counts_properties, # modify the extended stats summary and include the GMM
+            col_names,
+            mode,
+            batchid1,
+            batchid2,
+            delta,
+            batch_correction,
+            fdr_target,
+            silent,
+            **kwargs,
+        )
+
+        return result
