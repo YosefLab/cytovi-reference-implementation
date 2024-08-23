@@ -166,15 +166,19 @@ class CytoVAE(BaseModuleClass):
         )
 
 
-        if self.prior_mixture is True:
-            self.prior_means = torch.nn.Parameter(0.01 * torch.randn([n_labels, prior_mixture_k, n_latent]))
-            self.prior_log_scales = torch.nn.Parameter(torch.zeros([n_labels, prior_mixture_k, n_latent]))
-            self.prior_logits = torch.nn.Parameter(torch.zeros([n_labels, prior_mixture_k]))
-
         # if self.prior_mixture is True:
-        #     self.prior_means = torch.nn.Parameter(0.01 * torch.randn([prior_mixture_k, n_latent]))
-        #     self.prior_log_scales = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
-        #     self.prior_logits = torch.nn.Parameter(torch.zeros([prior_mixture_k]))
+        #     self.prior_means = torch.nn.Parameter(0.01 * torch.randn([n_labels, prior_mixture_k, n_latent]))
+        #     self.prior_log_scales = torch.nn.Parameter(torch.zeros([n_labels, prior_mixture_k, n_latent]))
+        #     self.prior_logits = torch.nn.Parameter(torch.zeros([n_labels, prior_mixture_k]))
+
+        if self.prior_mixture is True:
+            if self.n_labels > 1:
+                prior_mixture_k = n_labels
+                self.prior_means = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
+            else:
+                self.prior_means = torch.nn.Parameter(torch.randn([prior_mixture_k, n_latent]))
+            self.prior_log_scales = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
+            self.prior_logits = torch.nn.Parameter(torch.zeros([prior_mixture_k]))
 
 
     def _get_inference_input(
@@ -292,19 +296,33 @@ class CytoVAE(BaseModuleClass):
             px = Beta(concentration1=px_param1, concentration0=px_param2)
 
         if self.prior_mixture is True:
-            y = y.ravel().long()
-            indexed_means = self.prior_means[y]
-            indexed_log_scales = self.prior_log_scales[y]
-            indexed_logits = self.prior_logits[y]
-            cats = Categorical(logits = indexed_logits)
+            prior_means = self.prior_means
+            prior_scales = torch.exp(self.prior_log_scales) + 1e-4
+            prior_logits = self.prior_logits
+
+            if self.n_labels > 1:
+                logits_labels = (
+                    torch.stack(
+                        [
+                            torch.nn.functional.one_hot(y_i, self.n_labels)
+                            if y_i < self.n_labels
+                            else torch.zeros(self.n_labels)
+                            for y_i in y.ravel()
+                        ]
+                    )
+                    .to(z.device)
+                    .float()
+                )
+                prior_logits = prior_logits + 10 * logits_labels # turn 10 into hyperparam?
+                prior_means = prior_means.expand(y.shape[0], -1, -1)
+                prior_scales = prior_scales.expand(y.shape[0], -1, -1)
+
+            cats = Categorical(logits = prior_logits)
             normal_dists = Independent(
-                Normal(indexed_means, torch.exp(indexed_log_scales) + 1e-4),
+                Normal(prior_means, prior_scales),
                     reinterpreted_batch_ndims = 1
                 )
             pz = MixtureSameFamily(cats, normal_dists)
-
-
-
 
         else:
             pz = Normal(torch.zeros_like(z), torch.ones_like(z))
