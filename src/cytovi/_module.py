@@ -104,6 +104,7 @@ class CytoVAE(BaseModuleClass):
         scale_activation: Optional[Literal["softplus", None]] = None,
         prior_mixture: Optional[bool] = True,
         prior_mixture_k: int = 20,
+        prior_label_weight: Optional[int] = 10,
 
     ):
         super().__init__()
@@ -116,6 +117,7 @@ class CytoVAE(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.encoder_marker_mask = encoder_marker_mask
         self.prior_mixture = prior_mixture
+        self.prior_label_weight = prior_label_weight
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -165,11 +167,6 @@ class CytoVAE(BaseModuleClass):
             **_extra_decoder_kwargs,
         )
 
-
-        # if self.prior_mixture is True:
-        #     self.prior_means = torch.nn.Parameter(0.01 * torch.randn([n_labels, prior_mixture_k, n_latent]))
-        #     self.prior_log_scales = torch.nn.Parameter(torch.zeros([n_labels, prior_mixture_k, n_latent]))
-        #     self.prior_logits = torch.nn.Parameter(torch.zeros([n_labels, prior_mixture_k]))
 
         if self.prior_mixture is True:
             if self.n_labels > 1:
@@ -313,7 +310,7 @@ class CytoVAE(BaseModuleClass):
                     .to(z.device)
                     .float()
                 )
-                prior_logits = prior_logits + 10 * logits_labels # turn 10 into hyperparam?
+                prior_logits = prior_logits + self.prior_label_weight * logits_labels
                 prior_means = prior_means.expand(y.shape[0], -1, -1)
                 prior_scales = prior_scales.expand(y.shape[0], -1, -1)
 
