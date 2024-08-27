@@ -170,6 +170,12 @@ def biaxial(
     check_group_by(adata, color)
     check_layer_key(adata, layer_key)
 
+    if kde_kwargs is None:
+        kde_kwargs = {}
+
+    if scatter_kwargs is None:
+        scatter_kwargs = {}
+
     # subsample if too many observations
     if downsample and adata.n_obs > 10000:
         if color is not None and sample_color_groups is True:
