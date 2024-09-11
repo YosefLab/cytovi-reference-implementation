@@ -256,7 +256,7 @@ def merge_batches(
 
 
 def subsample(
-    adata: AnnData, n_obs: int = 10000, random_state: int = 0, replace: bool = False, groupby: str = None
+    adata: AnnData, n_obs: int = 10000, random_state: int = 0, replace: bool = False, groupby: str = None, n_obs_group: Optional[int] = None,
 ) -> Optional[AnnData]:
     """
     Subsample an AnnData object.
@@ -280,7 +280,9 @@ def subsample(
         if groupby not in adata.obs:
             raise ValueError(f"Group {groupby} not found in adata.obs.")
         group_cats = adata.obs[groupby].drop_duplicates().values
-        n_obs_group = n_obs // len(group_cats)
+
+        if n_obs_group is None:
+            n_obs_group = n_obs // len(group_cats)
 
         if not replace:
             for group in group_cats:

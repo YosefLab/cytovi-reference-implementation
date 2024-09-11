@@ -104,6 +104,7 @@ class CytoVAE(BaseModuleClass):
         scale_activation: Optional[Literal["softplus", None]] = None,
         prior_mixture: Optional[bool] = True,
         prior_mixture_k: int = 20,
+        prior_label_weight: Optional[int] = 10,
 
     ):
         super().__init__()
@@ -116,6 +117,7 @@ class CytoVAE(BaseModuleClass):
         self.encode_covariates = encode_covariates
         self.encoder_marker_mask = encoder_marker_mask
         self.prior_mixture = prior_mixture
+        self.prior_label_weight = prior_label_weight
 
         use_batch_norm_encoder = use_batch_norm == "encoder" or use_batch_norm == "both"
         use_batch_norm_decoder = use_batch_norm == "decoder" or use_batch_norm == "both"
@@ -165,10 +167,16 @@ class CytoVAE(BaseModuleClass):
             **_extra_decoder_kwargs,
         )
 
+
         if self.prior_mixture is True:
-            self.prior_means = torch.nn.Parameter(0.01 * torch.randn([prior_mixture_k, n_latent]))
+            if self.n_labels > 1:
+                prior_mixture_k = n_labels
+                self.prior_means = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
+            else:
+                self.prior_means = torch.nn.Parameter(torch.randn([prior_mixture_k, n_latent]))
             self.prior_log_scales = torch.nn.Parameter(torch.zeros([prior_mixture_k, n_latent]))
             self.prior_logits = torch.nn.Parameter(torch.zeros([prior_mixture_k]))
+
 
     def _get_inference_input(
         self,
@@ -278,18 +286,41 @@ class CytoVAE(BaseModuleClass):
             y,
         )
 
+
         if self.protein_likelihood == "normal":
             px = Normal(loc=px_param1, scale=px_param2)
         elif self.protein_likelihood == "beta":
             px = Beta(concentration1=px_param1, concentration0=px_param2)
 
         if self.prior_mixture is True:
-            cats = Categorical(logits = self.prior_logits)
+            prior_means = self.prior_means
+            prior_scales = torch.exp(self.prior_log_scales) + 1e-4
+            prior_logits = self.prior_logits
+
+            if self.n_labels > 1:
+                logits_labels = (
+                    torch.stack(
+                        [
+                            torch.nn.functional.one_hot(y_i, self.n_labels)
+                            if y_i < self.n_labels
+                            else torch.zeros(self.n_labels)
+                            for y_i in y.ravel()
+                        ]
+                    )
+                    .to(z.device)
+                    .float()
+                )
+                prior_logits = prior_logits + self.prior_label_weight * logits_labels
+                prior_means = prior_means.expand(y.shape[0], -1, -1)
+                prior_scales = prior_scales.expand(y.shape[0], -1, -1)
+
+            cats = Categorical(logits = prior_logits)
             normal_dists = Independent(
-                Normal(self.prior_means, torch.exp(self.prior_log_scales) + 1e-4),
+                Normal(prior_means, prior_scales),
                     reinterpreted_batch_ndims = 1
                 )
             pz = MixtureSameFamily(cats, normal_dists)
+
         else:
             pz = Normal(torch.zeros_like(z), torch.ones_like(z))
 

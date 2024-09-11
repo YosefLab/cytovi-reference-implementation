@@ -165,7 +165,7 @@ class CytoVI(
 
         self._model_summary_string = (  # noqa: UP032
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
-            "{}, \nprotein_likelihood: {}, latent_distribution: {}, \nn_proteins: {}, , Impute missing markers: {}"
+            "{}, \nprotein_likelihood: {}, latent_distribution: {}, \nMoG prior: {}, n_labels {}, n_proteins: {}, \nImpute missing markers: {}"
         ).format(
             n_hidden,
             n_latent,
@@ -173,6 +173,8 @@ class CytoVI(
             dropout_rate,
             protein_likelihood,
             latent_distribution,
+            prior_mixture,
+            self.summary_stats.n_labels,
             self.summary_stats.n_vars,
             self.nan_imputation
         )

@@ -111,11 +111,15 @@ def biaxial(
     adata: AnnData,
     marker_x: Union[str, list[str]] = None,
     marker_y: Union[str, list[str]] = None,
-    groupby: str = None,
+    color: str = None,
     n_bins: int = 10,
     layer_key: str = "raw",
     downsample: bool = True,
     n_obs: int = 10000,
+    sample_color_groups: bool = False,
+    save: Union[bool, str] = None,
+    kde_kwargs: dict = None,
+    scatter_kwargs: dict = None,
     **kwargs,
 ):
     """
@@ -163,12 +167,21 @@ def biaxial(
 
     check_marker(adata, marker_x)
     check_marker(adata, marker_y)
-    check_group_by(adata, groupby)
+    check_group_by(adata, color)
     check_layer_key(adata, layer_key)
+
+    if kde_kwargs is None:
+        kde_kwargs = {}
+
+    if scatter_kwargs is None:
+        scatter_kwargs = {}
 
     # subsample if too many observations
     if downsample and adata.n_obs > 10000:
-        adata = subsample(adata, n_obs=n_obs, groupby=groupby)
+        if color is not None and sample_color_groups is True:
+            adata = subsample(adata, n_obs=n_obs, groupby=color)
+        else:
+            adata = subsample(adata, n_obs=n_obs)
 
     # remove marker from marker_x if it is also in marker_y
     if marker_x is not None and marker_y is not None:
@@ -178,11 +191,18 @@ def biaxial(
 
     data_plot = adata[:, marker].to_df(layer=layer_key)
 
-    if groupby is not None:
-        data_plot[groupby] = adata.obs[groupby]
+    if color is not None:
+        data_plot[color] = adata.obs[color]
 
-    g = sns.PairGrid(data_plot, x_vars=marker_x, y_vars=marker_y, hue=groupby, **kwargs)
-    g.map(sns.kdeplot, levels=n_bins)
-    g.map(sns.scatterplot, s=5)
+    g = sns.PairGrid(data_plot, x_vars=marker_x, y_vars=marker_y, hue=color, **kwargs)
+    g.map(sns.kdeplot, levels=n_bins, **kde_kwargs)
+    g.map(sns.scatterplot, s=5, **scatter_kwargs)
     g.add_legend()
+
+    if save is not None:
+        if save is True:
+            save = "marker_histogram.png"
+        g.savefig(save)
+
     plt.show()
+
