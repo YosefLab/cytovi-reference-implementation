@@ -150,6 +150,15 @@ class CytoVI(
                     "When analyzing overlapping panels, only encoding of the backbone markers is currently supported."
                 )
 
+            if encoder_marker_mask is not None:
+                enc_marker_intersection = [marker in backbone_markers for marker in encoder_marker_list]
+                probl_markers = [marker for marker, intersection in zip(encoder_marker_list, enc_marker_intersection) if not intersection]
+                probl_markers_str = ", ".join(probl_markers)
+                if not all(enc_marker_intersection):
+                    raise ValueError(
+                        f"{probl_markers_str} are in 'encoder_marker_list' but not in backbone marker list. When analyzing overlapping panels, only encoding of the backbone markers is currently supported."
+                    )
+
             if encode_backbone_only:
                 encoder_marker_mask = self.backbone_marker_mask
 
