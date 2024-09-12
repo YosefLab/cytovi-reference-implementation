@@ -113,7 +113,7 @@ class CytoVI(
         encode_backbone_only: Optional [bool] = None,
         encoder_marker_list: Optional [list] = None,
         prior_mixture: Optional[bool] = True,
-        prior_mixture_k: int = 20,
+        prior_mixture_k: Optional[int] = None,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -126,7 +126,7 @@ class CytoVI(
         n_batch = self.summary_stats.n_batch
         all_markers = adata.var_names
 
-        if encoder_marker_list is not None:
+        if encoder_marker_list is not None: # if nan_imputation, ensure we take the intersection between the encoder markers and the backbone markers
             check_marker(adata, encoder_marker_list)
             encode_backbone_only = False
             encoder_marker_mask = all_markers.isin(encoder_marker_list)
@@ -145,6 +145,10 @@ class CytoVI(
 
             if encode_backbone_only is None:
                 encode_backbone_only = True
+            elif encode_backbone_only is False:
+                raise NotImplementedError(
+                    "When analyzing overlapping panels, only encoding of the backbone markers is currently supported."
+                )
 
             if encode_backbone_only:
                 encoder_marker_mask = self.backbone_marker_mask
@@ -161,6 +165,9 @@ class CytoVI(
             else:
                 n_vars_encoded = self.summary_stats.n_vars
             n_latent = get_n_latent_heuristic(n_vars_encoded)
+
+        if prior_mixture_k is None:
+            prior_mixture_k = n_latent
 
 
         self._model_summary_string = (  # noqa: UP032
