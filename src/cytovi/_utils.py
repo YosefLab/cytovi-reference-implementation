@@ -45,3 +45,6 @@ def clip_lfc_factory(min_lfc: float, max_lfc: float):
         return np.log2(x) - np.log2(y)
     return clip_lfc
 
+def check_expression_range(data, min_exp, max_exp):
+    data_in_range =  np.min(data) > min_exp and np.max(data) < max_exp
+    return data_in_range

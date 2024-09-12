@@ -29,7 +29,7 @@ from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import CytoVAE
-from ._utils import check_marker, clip_lfc_factory, get_n_latent_heuristic
+from ._utils import check_expression_range, check_marker, clip_lfc_factory, get_n_latent_heuristic
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ class CytoVI(
         n_batch = self.summary_stats.n_batch
         all_markers = adata.var_names
 
-        if encoder_marker_list is not None: # if nan_imputation, ensure we take the intersection between the encoder markers and the backbone markers
+        if encoder_marker_list is not None:
             check_marker(adata, encoder_marker_list)
             encode_backbone_only = False
             encoder_marker_mask = all_markers.isin(encoder_marker_list)
@@ -177,6 +177,14 @@ class CytoVI(
 
         if prior_mixture_k is None:
             prior_mixture_k = n_latent
+
+        if protein_likelihood == "beta":
+            expr = self.adata_manager.get_from_registry("X")
+            corr_range = check_expression_range(expr, 0, 1)
+            if not corr_range:
+                raise ValueError(
+                    "Protein expression must be in the range (0, 1) for beta likelihood. Perform scaling or choose other likelihood."
+                )
 
 
         self._model_summary_string = (  # noqa: UP032
@@ -645,7 +653,7 @@ class CytoVI(
         weights: Union[Literal["uniform", "importance"], None] = "uniform",
         filter_outlier_cells: bool = False,
         lfc_clipping: bool = True,
-        clipping_range: tuple = (1e-6, 1-1e-6),
+        clipping_range: tuple = (0, 1),
         importance_weighting_kwargs: Union[dict, None] = None,
         **kwargs,
     ) -> pd.DataFrame:
@@ -697,8 +705,17 @@ class CytoVI(
         )
         representation_fn = self.get_latent_representation if filter_outlier_cells else None
 
-        if lfc_clipping is True: # note: if data range is not [0,1] we should return a warning
-            change_fn_clp = clip_lfc_factory(clipping_range[0], clipping_range[1])
+        if lfc_clipping is True:
+            eps = 1e-6
+            clip_min = clipping_range[0] + eps
+            clip_max = clipping_range[1] - eps
+
+            expr = self.adata_manager.get_from_registry("X")
+            corr_range = check_expression_range(expr, clipping_range[0], clipping_range[1])
+            if not corr_range:
+                msg = "Protein expression exceeds clipping range, which can lead to poor DE results. Please adjust clipping range to data range."
+                warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+            change_fn_clp = clip_lfc_factory(clip_min, clip_max)
 
             if kwargs is None:
                 kwargs = {}
