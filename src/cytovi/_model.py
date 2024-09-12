@@ -480,6 +480,10 @@ class CytoVI(
             magnitude. If set to `"latent"`, use the latent library size.
         n_samples
             Number of posterior samples to use for estimation.
+        n_samples_overall
+            Number of posterior samples to use for estimation. Overrides `n_samples`.
+        weights
+            Weights to use for sampling. If `None`, defaults to `"uniform"`.
         batch_size
             Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
         return_mean
@@ -494,21 +498,13 @@ class CytoVI(
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
         """
-        # notes for DE: storing the distribution is currently not possible when doing nan_imputation; this is only relevant for importance sampling;
-        # without importance sampling we still need to make sure that the nan_imputation does not mess with DE
         adata = self._validate_anndata(adata)
         all_batches = list(np.unique(self.adata_manager.get_from_registry("batch")))
 
         if self.nan_imputation is True:
-            backbone_marker_mask=self.backbone_marker_mask
-            nan_imputation = True
-
             if  nan_warning is True:
                 msg = "detected missing proteins between batches - will impute missing markers"
                 warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
-
-        else:
-            nan_imputation = False
 
         if indices is None:
             indices = np.arange(adata.n_obs)
@@ -535,19 +531,11 @@ class CytoVI(
                 self.get_anndata_manager(adata, required=True), transform_batch
             )
 
-        if nan_imputation is True: # note: test whether we wanna exclude this
-            decode_batches = all_batches
-        else:
-            decode_batches = transform_batch
 
         store_distributions = weights == "importance"
         if store_distributions and len(transform_batch) > 1:
             raise NotImplementedError(
                 "Importance weights cannot be computed when expression levels are averaged across batches."
-            )
-        if store_distributions and nan_imputation:
-            raise NotImplementedError(
-                "Importance weights cannot be computed when imputing missing markers."
             )
 
         exprs = []
@@ -556,7 +544,7 @@ class CytoVI(
         px_store = DistributionConcatenator()
         for tensors in scdl:
             per_batch_exprs = []
-            for batch in decode_batches:
+            for batch in transform_batch:
                 generative_kwargs = self._get_transform_batch_gen_kwargs(batch)
                 inference_kwargs = {"n_samples": n_samples}
                 inference_outputs, generative_outputs = self.module.forward(
@@ -569,24 +557,6 @@ class CytoVI(
                 output = generative_outputs["px"].mean
                 output = output.cpu().numpy()
 
-                # masking if markers where not measured in respective batch
-                if nan_imputation is True:
-                    batch_str = "_batch_" + str(batch)
-                    batch_marker_mask = adata.var[batch_str]
-                    output[..., ~batch_marker_mask] = None # test to omit masking
-
-                    # masking if backbone markers of respective batch are not used
-                    if transform_batch == [None]:
-                        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-                        index_measure_mask = np.array(batch_index != batch).flatten()
-                        index_marker_mask = np.outer(index_measure_mask, backbone_marker_mask)
-
-                        output[..., index_marker_mask] = None
-
-                    else:
-                        if batch not in transform_batch:
-                            output[..., backbone_marker_mask] = None
-
                 output = output[..., protein_mask]
 
                 per_batch_exprs.append(output)
@@ -596,7 +566,7 @@ class CytoVI(
             zs.append(inference_outputs["z"].cpu())
             per_batch_exprs = np.stack(per_batch_exprs)
 
-            exprs += [np.nanmean(per_batch_exprs, axis=0)]
+            exprs += [per_batch_exprs.mean(axis=0)]
 
         if n_samples > 1:
             # The -2 axis correspond to cells.
@@ -627,7 +597,7 @@ class CytoVI(
             ind_ = np.random.choice(n_samples_, n_samples_overall, p=p, replace=True)
             exprs = exprs[ind_]
         elif n_samples > 1 and return_mean:
-            exprs = np.nanmean(exprs, axis=0)
+            exprs = exprs.mean(axis=0)
 
         if return_numpy is None or return_numpy is False:
             return pd.DataFrame(
