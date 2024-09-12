@@ -29,7 +29,7 @@ from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import CytoVAE
-from ._utils import check_marker, get_n_latent_heuristic
+from ._utils import check_marker, clip_lfc_factory, get_n_latent_heuristic
 
 logger = logging.getLogger(__name__)
 
@@ -535,7 +535,7 @@ class CytoVI(
                 self.get_anndata_manager(adata, required=True), transform_batch
             )
 
-        if nan_imputation is True:
+        if nan_imputation is True: # note: test whether we wanna exclude this
             decode_batches = all_batches
         else:
             decode_batches = transform_batch
@@ -573,7 +573,7 @@ class CytoVI(
                 if nan_imputation is True:
                     batch_str = "_batch_" + str(batch)
                     batch_marker_mask = adata.var[batch_str]
-                    output[..., ~batch_marker_mask] = None
+                    output[..., ~batch_marker_mask] = None # test to omit masking
 
                     # masking if backbone markers of respective batch are not used
                     if transform_batch == [None]:
@@ -658,6 +658,8 @@ class CytoVI(
         silent: bool = False,
         weights: Union[Literal["uniform", "importance"], None] = "uniform",
         filter_outlier_cells: bool = False,
+        lfc_clipping: bool = True,
+        clipping_range: tuple = (1e-6, 1-1e-6),
         importance_weighting_kwargs: Union[dict, None] = None,
         **kwargs,
     ) -> pd.DataFrame:
@@ -708,6 +710,15 @@ class CytoVI(
             **importance_weighting_kwargs,
         )
         representation_fn = self.get_latent_representation if filter_outlier_cells else None
+
+        if lfc_clipping is True: # note: if data range is not [0,1] we should return a warning
+            change_fn_clp = clip_lfc_factory(clipping_range[0], clipping_range[1])
+
+            if kwargs is None:
+                kwargs = {}
+                kwargs["change_fn"] = change_fn_clp
+            else:
+                kwargs["change_fn"] = change_fn_clp
 
         result = _de_core(
             self.get_anndata_manager(adata, required=True),

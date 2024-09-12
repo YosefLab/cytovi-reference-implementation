@@ -1,3 +1,4 @@
+import numpy as np
 from anndata import AnnData
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
@@ -36,3 +37,11 @@ def get_n_latent_heuristic(n_vars: int, latent_max: int = 20, latent_min: int = 
         n_latent = latent_min
 
     return n_latent
+
+def clip_lfc_factory(min_lfc: float, max_lfc: float):
+    def clip_lfc(x, y):
+        x = np.clip(x, min_lfc, max_lfc)
+        y = np.clip(y, min_lfc, max_lfc)
+        return np.log2(x) - np.log2(y)
+    return clip_lfc
+
