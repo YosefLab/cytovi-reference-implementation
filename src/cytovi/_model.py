@@ -756,7 +756,7 @@ class CytoVI(
 
         return result
 
-    def impute_categories_from_query(
+    def impute_categories_from_reference(
         self,
         adata_reference: AnnData,
         cat_key: str,
