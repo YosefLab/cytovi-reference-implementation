@@ -29,7 +29,7 @@ from scvi.utils._docstrings import devices_dsp
 
 from ._constants import REGISTRY_KEYS
 from ._module import CytoVAE
-from ._utils import check_expression_range, check_marker, clip_lfc_factory, get_n_latent_heuristic
+from ._utils import clip_lfc_factory, get_n_latent_heuristic, validate_expression_range, validate_marker
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class CytoVI(
         all_markers = adata.var_names
 
         if encoder_marker_list is not None:
-            check_marker(adata, encoder_marker_list)
+            validate_marker(adata, encoder_marker_list)
             encode_backbone_only = False
             encoder_marker_mask = all_markers.isin(encoder_marker_list)
         else:
@@ -180,7 +180,7 @@ class CytoVI(
 
         if protein_likelihood == "beta":
             expr = self.adata_manager.get_from_registry("X")
-            corr_range = check_expression_range(expr, 0, 1)
+            corr_range = validate_expression_range(expr, 0, 1)
             if not corr_range:
                 raise ValueError(
                     "Protein expression must be in the range (0, 1) for beta likelihood. Perform scaling or choose other likelihood."
@@ -711,7 +711,7 @@ class CytoVI(
             clip_max = clipping_range[1] - eps
 
             expr = self.adata_manager.get_from_registry("X")
-            corr_range = check_expression_range(expr, clipping_range[0], clipping_range[1])
+            corr_range = validate_expression_range(expr, clipping_range[0], clipping_range[1])
             if not corr_range:
                 msg = "Protein expression exceeds clipping range, which can lead to poor DE results. Please adjust clipping range to data range."
                 warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)

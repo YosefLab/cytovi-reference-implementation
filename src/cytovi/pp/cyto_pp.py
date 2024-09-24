@@ -6,7 +6,7 @@ import numpy as np
 from anndata import AnnData
 from scvi import settings
 
-from cytovi._utils import apply_scaling, validate_layer_key, validate_marker, validate_obs_key
+from cytovi._utils import apply_scaling, validate_layer_key, validate_marker, validate_obs_keys
 
 
 def arcsinh(
@@ -333,7 +333,7 @@ def mask_markers(
         markers = [markers]
 
     validate_marker(adata, markers)
-    validate_obs_key(adata, batch_key)
+    validate_obs_keys(adata, batch_key)
 
     for batch in adata.obs[batch_key].cat.categories:
         adata_batch = adata[adata.obs[batch_key] == batch].copy()
