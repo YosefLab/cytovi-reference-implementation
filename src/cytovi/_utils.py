@@ -1,8 +1,9 @@
 from typing import Union
 
 import numpy as np
+import pynndescent
 from anndata import AnnData
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.preprocessing import MinMaxScaler, OneHotEncoder, StandardScaler
 
 
 def validate_marker(adata: AnnData, marker: Union[str, list[str]]):
@@ -60,3 +61,27 @@ def clip_lfc_factory(min_lfc: float, max_lfc: float):
 def validate_expression_range(data, min_exp, max_exp):
     data_in_range =  np.min(data) > min_exp and np.max(data) < max_exp
     return data_in_range
+
+def encode_categories(adata, cat_key):
+    """One-Hot encode the categories for the given key."""
+    ohe = OneHotEncoder(sparse=False, handle_unknown='ignore')
+    return ohe.fit_transform(adata.obs[cat_key].values.reshape(-1, 1)), ohe
+
+def impute_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=5):
+    """Use pynndescent to find nearest neighbors and impute missing categories."""
+    nn_index = pynndescent.NNDescent(rep_ref, n_neighbors=n_neighbors, metric='euclidean')
+
+    # Find the nearest neighbors for query data within the reference data
+    indices, distances = nn_index.query(rep_query, k=n_neighbors)
+
+    # Get the neighbor categories for each query point
+    neighbor_categories = cat_encoded_ref[indices]  # Shape: (n_query, n_neighbors, n_categories)
+
+    # Sum the one-hot encoded categories for each query point's neighbors
+    # This gives the count of each category across the neighbors
+    category_sums = np.sum(neighbor_categories, axis=1)  # Shape: (n_query, n_categories)
+
+    # Find the index of the most frequent category for each query point
+    imputed_cat_indices = np.argmax(category_sums, axis=1)  # Shape: (n_query,)
+
+    return imputed_cat_indices

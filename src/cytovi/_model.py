@@ -27,9 +27,18 @@ from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.utils import de_dsp, setup_anndata_dsp
 from scvi.utils._docstrings import devices_dsp
 
-from ._constants import REGISTRY_KEYS
+from ._constants import CYTOVI_DEFAULT_REP, REGISTRY_KEYS
 from ._module import CytoVAE
-from ._utils import clip_lfc_factory, get_n_latent_heuristic, validate_expression_range, validate_marker
+from ._utils import (
+    clip_lfc_factory,
+    encode_categories,
+    get_n_latent_heuristic,
+    impute_with_neighbors,
+    validate_expression_range,
+    validate_marker,
+    validate_obs_keys,
+    validate_obsm_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -746,3 +755,70 @@ class CytoVI(
         )
 
         return result
+
+    def impute_categories_from_query(
+        self,
+        adata_reference: AnnData,
+        cat_key: str,
+        use_rep: Optional[str] = None,
+        n_neighbors: int = 20
+        ):
+        """
+        Impute missing categories for the query data based on a reference dataset using a shared representation.
+
+        Parameters
+        ----------
+        adata_reference : AnnData
+            Annotated data matrix for the reference dataset. This dataset contains the categories to be imputed onto the query data.
+        cat_key : str
+            The key in the `.obs` attribute of `adata_reference` that specifies the categorical variable (e.g., cell types or clusters) to impute.
+        use_rep : str, optional
+            The key in the `.obsm` attribute to use as the representation space (e.g., latent space). If `None`, the function will attempt to use a default latent representation X_CytoVI.
+        n_neighbors : int, optional (default: 20)
+            The number of nearest neighbors to use for imputation. The imputation is based on similarity in the chosen representation space.
+
+        Returns
+        -------
+        np.ndarray
+            A numpy array of imputed categories for the query dataset, corresponding to the categorical variable specified by `cat_key`.
+        ```
+
+        Notes
+        -----
+        This function assumes that both the query and reference datasets have a precomputed representation in `.obsm` (typically CytoVI latent space). If not, you must either provide a common representation manually or ensure that one is generated.
+        """
+        adata_query = self.adata
+
+        if use_rep is None:
+            ref_obsm_keys = adata_reference.obsm.keys()
+            query_obsm_keys = adata_query.obsm.keys()
+            shared_obsm_keys = [key for key in ref_obsm_keys if key in query_obsm_keys]
+
+            if CYTOVI_DEFAULT_REP in shared_obsm_keys:
+                use_rep = CYTOVI_DEFAULT_REP
+            elif CYTOVI_DEFAULT_REP in ref_obsm_keys:
+                adata_query.obsm[CYTOVI_DEFAULT_REP] = self.get_latent_representation()
+                use_rep = CYTOVI_DEFAULT_REP
+            else:
+                raise ValueError("No shared representation found between reference and query data. Please specify a representation to use.")
+
+        # Validate input keys
+        validate_obsm_keys(adata_query, use_rep)
+        validate_obsm_keys(adata_reference, use_rep)
+        validate_obs_keys(adata_reference, cat_key)
+
+        # One-Hot Encode the reference categories
+        cat_encoded_ref, ohe = encode_categories(adata_reference, cat_key)
+        n_cats = cat_encoded_ref.shape[1]
+
+        # Get representations
+        rep_ref = adata_reference.obsm[use_rep]
+        rep_query = adata_query.obsm[use_rep]
+
+        # Impute missing categories for the query data
+        imputed_query_cat_indices = impute_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=n_neighbors)
+
+        # Convert imputed indices back to category labels
+        imputed_query_cat = ohe.inverse_transform(np.eye(n_cats)[imputed_query_cat_indices])
+
+        return imputed_query_cat
