@@ -3,19 +3,19 @@ from anndata import AnnData
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
-def check_marker(adata: AnnData, marker: list[str]):
+def validate_marker(adata: AnnData, marker: list[str]):
     for m in marker:
         if m not in adata.var_names:
             raise ValueError(f"Marker {m} not found in adata.var_names.")
 
 
-def check_group_by(adata: AnnData, group_by: str):
-    if group_by is not None:
-        if group_by not in adata.obs:
-            raise ValueError(f"Group by {group_by} not found in adata.obs.")
+def validate_obs_key(adata: AnnData, obs_key: str):
+    if obs_key is not None:
+        if obs_key not in adata.obs:
+            raise ValueError(f"Group by {obs_key} not found in adata.obs.")
 
 
-def check_layer_key(adata: AnnData, layer_key: str):
+def validate_layer_key(adata: AnnData, layer_key: str):
     if layer_key is not None:
         if layer_key not in adata.layers:
             raise ValueError(f"Layer key {layer_key} not found in adata.layers.")
@@ -45,6 +45,6 @@ def clip_lfc_factory(min_lfc: float, max_lfc: float):
         return np.log2(x) - np.log2(y)
     return clip_lfc
 
-def check_expression_range(data, min_exp, max_exp):
+def validate_expression_range(data, min_exp, max_exp):
     data_in_range =  np.min(data) > min_exp and np.max(data) < max_exp
     return data_in_range
