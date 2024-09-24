@@ -12,7 +12,7 @@ def validate_marker(adata: AnnData, marker: list[str]):
 def validate_obs_key(adata: AnnData, obs_key: str):
     if obs_key is not None:
         if obs_key not in adata.obs:
-            raise ValueError(f"Group by {obs_key} not found in adata.obs.")
+            raise ValueError(f"Key {obs_key} not found in adata.obs.")
 
 
 def validate_layer_key(adata: AnnData, layer_key: str):
