@@ -9,10 +9,11 @@ def validate_marker(adata: AnnData, marker: list[str]):
             raise ValueError(f"Marker {m} not found in adata.var_names.")
 
 
-def validate_obs_key(adata: AnnData, obs_key: str):
-    if obs_key is not None:
-        if obs_key not in adata.obs:
-            raise ValueError(f"Key {obs_key} not found in adata.obs.")
+def validate_obs_keys(adata: AnnData, obs_key: str):
+    for key in obs_key:
+        if key is not None:
+            if key not in adata.obs:
+                raise ValueError(f"Key {key} not found in adata.obs.")
 
 
 def validate_layer_key(adata: AnnData, layer_key: str):
