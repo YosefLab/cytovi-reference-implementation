@@ -27,9 +27,18 @@ from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.utils import de_dsp, setup_anndata_dsp
 from scvi.utils._docstrings import devices_dsp
 
-from ._constants import REGISTRY_KEYS
+from ._constants import CYTOVI_DEFAULT_REP, REGISTRY_KEYS
 from ._module import CytoVAE
-from ._utils import check_marker, get_n_latent_heuristic
+from ._utils import (
+    clip_lfc_factory,
+    encode_categories,
+    get_n_latent_heuristic,
+    impute_with_neighbors,
+    validate_expression_range,
+    validate_marker,
+    validate_obs_keys,
+    validate_obsm_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +122,7 @@ class CytoVI(
         encode_backbone_only: Optional [bool] = None,
         encoder_marker_list: Optional [list] = None,
         prior_mixture: Optional[bool] = True,
-        prior_mixture_k: int = 20,
+        prior_mixture_k: Optional[int] = None,
         **model_kwargs,
     ):
         super().__init__(adata)
@@ -127,7 +136,7 @@ class CytoVI(
         all_markers = adata.var_names
 
         if encoder_marker_list is not None:
-            check_marker(adata, encoder_marker_list)
+            validate_marker(adata, encoder_marker_list)
             encode_backbone_only = False
             encoder_marker_mask = all_markers.isin(encoder_marker_list)
         else:
@@ -145,6 +154,19 @@ class CytoVI(
 
             if encode_backbone_only is None:
                 encode_backbone_only = True
+            elif encode_backbone_only is False:
+                raise NotImplementedError(
+                    "When analyzing overlapping panels, only encoding of the backbone markers is currently supported."
+                )
+
+            if encoder_marker_mask is not None:
+                enc_marker_intersection = [marker in backbone_markers for marker in encoder_marker_list]
+                probl_markers = [marker for marker, intersection in zip(encoder_marker_list, enc_marker_intersection) if not intersection]
+                probl_markers_str = ", ".join(probl_markers)
+                if not all(enc_marker_intersection):
+                    raise ValueError(
+                        f"{probl_markers_str} are in 'encoder_marker_list' but not in backbone marker list. When analyzing overlapping panels, only encoding of the backbone markers is currently supported."
+                    )
 
             if encode_backbone_only:
                 encoder_marker_mask = self.backbone_marker_mask
@@ -161,6 +183,17 @@ class CytoVI(
             else:
                 n_vars_encoded = self.summary_stats.n_vars
             n_latent = get_n_latent_heuristic(n_vars_encoded)
+
+        if prior_mixture_k is None:
+            prior_mixture_k = n_latent
+
+        if protein_likelihood == "beta":
+            expr = self.adata_manager.get_from_registry("X")
+            corr_range = validate_expression_range(expr, 0, 1)
+            if not corr_range:
+                raise ValueError(
+                    "Protein expression must be in the range (0, 1) for beta likelihood. Perform scaling or choose other likelihood."
+                )
 
 
         self._model_summary_string = (  # noqa: UP032
@@ -480,6 +513,10 @@ class CytoVI(
             magnitude. If set to `"latent"`, use the latent library size.
         n_samples
             Number of posterior samples to use for estimation.
+        n_samples_overall
+            Number of posterior samples to use for estimation. Overrides `n_samples`.
+        weights
+            Weights to use for sampling. If `None`, defaults to `"uniform"`.
         batch_size
             Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
         return_mean
@@ -494,21 +531,13 @@ class CytoVI(
         If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
         Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
         """
-        # notes for DE: storing the distribution is currently not possible when doing nan_imputation; this is only relevant for importance sampling;
-        # without importance sampling we still need to make sure that the nan_imputation does not mess with DE
         adata = self._validate_anndata(adata)
         all_batches = list(np.unique(self.adata_manager.get_from_registry("batch")))
 
         if self.nan_imputation is True:
-            backbone_marker_mask=self.backbone_marker_mask
-            nan_imputation = True
-
             if  nan_warning is True:
                 msg = "detected missing proteins between batches - will impute missing markers"
                 warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
-
-        else:
-            nan_imputation = False
 
         if indices is None:
             indices = np.arange(adata.n_obs)
@@ -535,19 +564,11 @@ class CytoVI(
                 self.get_anndata_manager(adata, required=True), transform_batch
             )
 
-        if nan_imputation is True:
-            decode_batches = all_batches
-        else:
-            decode_batches = transform_batch
 
         store_distributions = weights == "importance"
         if store_distributions and len(transform_batch) > 1:
             raise NotImplementedError(
                 "Importance weights cannot be computed when expression levels are averaged across batches."
-            )
-        if store_distributions and nan_imputation:
-            raise NotImplementedError(
-                "Importance weights cannot be computed when imputing missing markers."
             )
 
         exprs = []
@@ -556,7 +577,7 @@ class CytoVI(
         px_store = DistributionConcatenator()
         for tensors in scdl:
             per_batch_exprs = []
-            for batch in decode_batches:
+            for batch in transform_batch:
                 generative_kwargs = self._get_transform_batch_gen_kwargs(batch)
                 inference_kwargs = {"n_samples": n_samples}
                 inference_outputs, generative_outputs = self.module.forward(
@@ -569,24 +590,6 @@ class CytoVI(
                 output = generative_outputs["px"].mean
                 output = output.cpu().numpy()
 
-                # masking if markers where not measured in respective batch
-                if nan_imputation is True:
-                    batch_str = "_batch_" + str(batch)
-                    batch_marker_mask = adata.var[batch_str]
-                    output[..., ~batch_marker_mask] = None
-
-                    # masking if backbone markers of respective batch are not used
-                    if transform_batch == [None]:
-                        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-                        index_measure_mask = np.array(batch_index != batch).flatten()
-                        index_marker_mask = np.outer(index_measure_mask, backbone_marker_mask)
-
-                        output[..., index_marker_mask] = None
-
-                    else:
-                        if batch not in transform_batch:
-                            output[..., backbone_marker_mask] = None
-
                 output = output[..., protein_mask]
 
                 per_batch_exprs.append(output)
@@ -596,7 +599,7 @@ class CytoVI(
             zs.append(inference_outputs["z"].cpu())
             per_batch_exprs = np.stack(per_batch_exprs)
 
-            exprs += [np.nanmean(per_batch_exprs, axis=0)]
+            exprs += [per_batch_exprs.mean(axis=0)]
 
         if n_samples > 1:
             # The -2 axis correspond to cells.
@@ -627,7 +630,7 @@ class CytoVI(
             ind_ = np.random.choice(n_samples_, n_samples_overall, p=p, replace=True)
             exprs = exprs[ind_]
         elif n_samples > 1 and return_mean:
-            exprs = np.nanmean(exprs, axis=0)
+            exprs = exprs.mean(axis=0)
 
         if return_numpy is None or return_numpy is False:
             return pd.DataFrame(
@@ -658,6 +661,8 @@ class CytoVI(
         silent: bool = False,
         weights: Union[Literal["uniform", "importance"], None] = "uniform",
         filter_outlier_cells: bool = False,
+        lfc_clipping: bool = True,
+        clipping_range: tuple = (0, 1),
         importance_weighting_kwargs: Union[dict, None] = None,
         **kwargs,
     ) -> pd.DataFrame:
@@ -709,6 +714,24 @@ class CytoVI(
         )
         representation_fn = self.get_latent_representation if filter_outlier_cells else None
 
+        if lfc_clipping is True:
+            eps = 1e-6
+            clip_min = clipping_range[0] + eps
+            clip_max = clipping_range[1] - eps
+
+            expr = self.adata_manager.get_from_registry("X")
+            corr_range = validate_expression_range(expr, clipping_range[0], clipping_range[1])
+            if not corr_range:
+                msg = "Protein expression exceeds clipping range, which can lead to poor DE results. Please adjust clipping range to data range."
+                warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+            change_fn_clp = clip_lfc_factory(clip_min, clip_max)
+
+            if kwargs is None:
+                kwargs = {}
+                kwargs["change_fn"] = change_fn_clp
+            else:
+                kwargs["change_fn"] = change_fn_clp
+
         result = _de_core(
             self.get_anndata_manager(adata, required=True),
             model_fn,
@@ -732,3 +755,70 @@ class CytoVI(
         )
 
         return result
+
+    def impute_categories_from_reference(
+        self,
+        adata_reference: AnnData,
+        cat_key: str,
+        use_rep: Optional[str] = None,
+        n_neighbors: int = 20
+        ):
+        """
+        Impute missing categories for the query data based on a reference dataset using a shared representation.
+
+        Parameters
+        ----------
+        adata_reference : AnnData
+            Annotated data matrix for the reference dataset. This dataset contains the categories to be imputed onto the query data.
+        cat_key : str
+            The key in the `.obs` attribute of `adata_reference` that specifies the categorical variable (e.g., cell types or clusters) to impute.
+        use_rep : str, optional
+            The key in the `.obsm` attribute to use as the representation space (e.g., latent space). If `None`, the function will attempt to use a default latent representation X_CytoVI.
+        n_neighbors : int, optional (default: 20)
+            The number of nearest neighbors to use for imputation. The imputation is based on similarity in the chosen representation space.
+
+        Returns
+        -------
+        np.ndarray
+            A numpy array of imputed categories for the query dataset, corresponding to the categorical variable specified by `cat_key`.
+        ```
+
+        Notes
+        -----
+        This function assumes that both the query and reference datasets have a precomputed representation in `.obsm` (typically CytoVI latent space). If not, you must either provide a common representation manually or ensure that one is generated.
+        """
+        adata_query = self.adata
+
+        if use_rep is None:
+            ref_obsm_keys = adata_reference.obsm.keys()
+            query_obsm_keys = adata_query.obsm.keys()
+            shared_obsm_keys = [key for key in ref_obsm_keys if key in query_obsm_keys]
+
+            if CYTOVI_DEFAULT_REP in shared_obsm_keys:
+                use_rep = CYTOVI_DEFAULT_REP
+            elif CYTOVI_DEFAULT_REP in ref_obsm_keys:
+                adata_query.obsm[CYTOVI_DEFAULT_REP] = self.get_latent_representation()
+                use_rep = CYTOVI_DEFAULT_REP
+            else:
+                raise ValueError("No shared representation found between reference and query data. Please specify a representation to use.")
+
+        # Validate input keys
+        validate_obsm_keys(adata_query, use_rep)
+        validate_obsm_keys(adata_reference, use_rep)
+        validate_obs_keys(adata_reference, cat_key)
+
+        # One-Hot Encode the reference categories
+        cat_encoded_ref, ohe = encode_categories(adata_reference, cat_key)
+        n_cats = cat_encoded_ref.shape[1]
+
+        # Get representations
+        rep_ref = adata_reference.obsm[use_rep]
+        rep_query = adata_query.obsm[use_rep]
+
+        # Impute missing categories for the query data
+        imputed_query_cat_indices = impute_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=n_neighbors)
+
+        # Convert imputed indices back to category labels
+        imputed_query_cat = ohe.inverse_transform(np.eye(n_cats)[imputed_query_cat_indices])
+
+        return imputed_query_cat

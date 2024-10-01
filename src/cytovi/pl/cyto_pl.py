@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from anndata import AnnData
 
-from cytovi._utils import check_group_by, check_layer_key, check_marker
+from cytovi._utils import validate_layer_key, validate_marker, validate_obs_keys
 from cytovi.pp.cyto_pp import subsample
 
 
@@ -64,9 +64,9 @@ def histogram(
     elif isinstance(marker, str):
         marker = [marker]
 
-    check_marker(adata, marker)
-    check_group_by(adata, groupby)
-    check_layer_key(adata, layer_key)
+    validate_marker(adata, marker)
+    validate_obs_keys(adata, groupby)
+    validate_layer_key(adata, layer_key)
 
     # subsample if too many observations
     if downsample and adata.n_obs > 10000:
@@ -165,10 +165,10 @@ def biaxial(
     if isinstance(marker_y, str):
         marker_y = [marker_y]
 
-    check_marker(adata, marker_x)
-    check_marker(adata, marker_y)
-    check_group_by(adata, color)
-    check_layer_key(adata, layer_key)
+    validate_marker(adata, marker_x)
+    validate_marker(adata, marker_y)
+    validate_obs_keys(adata, color)
+    validate_layer_key(adata, layer_key)
 
     if kde_kwargs is None:
         kde_kwargs = {}
