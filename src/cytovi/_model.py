@@ -22,7 +22,7 @@ from scvi.dataloaders import DataSplitter
 from scvi.distributions._utils import DistributionConcatenator
 from scvi.model._utils import _get_batch_code_from_category, scrna_raw_counts_properties
 from scvi.model.base import ArchesMixin, BaseModelClass, RNASeqMixin, UnsupervisedTrainingMixin, VAEMixin
-from scvi.model.base._utils import _de_core
+from scvi.model.base._de_core import _de_core
 from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.utils import de_dsp, setup_anndata_dsp
 from scvi.utils._docstrings import devices_dsp
