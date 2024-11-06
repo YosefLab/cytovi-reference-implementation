@@ -14,19 +14,21 @@ def validate_marker(adata: AnnData, marker: Union[str, list[str]]):
             raise ValueError(f"Marker {m} not found in adata.var_names.")
 
 def validate_obs_keys(adata: AnnData, obs_key: Union[str, list[str]]):
-    if isinstance(obs_key, str):
-        obs_key = [obs_key]
-    for key in obs_key:
-        if key is not None:
-            if key not in adata.obs:
-                raise ValueError(f"Key {key} not found in adata.obs.")
+    if obs_key is not None:
+        if isinstance(obs_key, str):
+            obs_key = [obs_key]
+        for key in obs_key:
+            if key is not None:
+                if key not in adata.obs:
+                    raise ValueError(f"Key {key} not found in adata.obs.")
 
 def validate_obsm_keys(adata, obsm_keys):
-    if isinstance(obsm_keys, str):
-        obsm_keys = [obsm_keys]
-    for key in obsm_keys:
-        if key not in adata.obsm:
-            raise KeyError(f"Key '{key}' not found in adata.obs or adata.obsm.")
+    if obsm_keys is not None:
+        if isinstance(obsm_keys, str):
+            obsm_keys = [obsm_keys]
+        for key in obsm_keys:
+            if key not in adata.obsm:
+                raise KeyError(f"Key '{key}' not found in adata.obs or adata.obsm.")
 
 def validate_layer_key(adata: AnnData, layer_key: str):
     if layer_key is not None:
