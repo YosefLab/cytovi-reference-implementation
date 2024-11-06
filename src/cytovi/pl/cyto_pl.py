@@ -82,7 +82,7 @@ def histogram(
     if groupby is not None:
         data_plot[groupby] = adata.obs[groupby]
 
-    data_plot_melt = data_plot.melt(id_vars=groupby)
+    data_plot_melt = data_plot.melt(id_vars=groupby, var_name='variable', value_name='value')
 
     # generate the plot
     g = sns.FacetGrid(
