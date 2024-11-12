@@ -139,7 +139,6 @@ class CytoVI(
 
         if encoder_marker_list is not None:
             validate_marker(adata, encoder_marker_list)
-            encode_backbone_only = False
             encoder_marker_mask = all_markers.isin(encoder_marker_list)
         else:
             encoder_marker_mask = None
@@ -154,7 +153,7 @@ class CytoVI(
             backbone_str = ", ".join(backbone_markers)
             self._use_adversarial_classifier = True
 
-            if encode_backbone_only is None:
+            if encode_backbone_only is None and encoder_marker_list is None:
                 encode_backbone_only = True
             elif encode_backbone_only is False:
                 raise NotImplementedError(
