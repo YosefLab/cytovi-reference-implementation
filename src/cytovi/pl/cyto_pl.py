@@ -165,6 +165,17 @@ def biaxial(
     if isinstance(marker_y, str):
         marker_y = [marker_y]
 
+    if marker_x is None and marker_y is None:
+        raise ValueError("At least one of marker_x or marker_y must be specified.")
+    elif marker_x is None:
+        marker_x = [*adata.var_names]
+        marker_x = list(set(marker_x) - set(marker_y))
+    elif marker_y is None:
+        marker_y = [*adata.var_names]
+        marker_y = list(set(marker_y) - set(marker_x))
+    else:
+        marker_x = list(set(marker_x) - set(marker_y))
+
     validate_marker(adata, marker_x)
     validate_marker(adata, marker_y)
     validate_obs_keys(adata, color)
@@ -182,10 +193,6 @@ def biaxial(
             adata = subsample(adata, n_obs=n_obs, groupby=color)
         else:
             adata = subsample(adata, n_obs=n_obs)
-
-    # remove marker from marker_x if it is also in marker_y
-    if marker_x is not None and marker_y is not None:
-        marker_x = list(set(marker_x) - set(marker_y))
 
     marker = marker_x + marker_y
 
