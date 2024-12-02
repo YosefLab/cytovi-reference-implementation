@@ -118,6 +118,7 @@ def biaxial(
     n_obs: int = 10000,
     sample_color_groups: bool = False,
     save: Union[bool, str] = None,
+    kde: bool = True,
     kde_kwargs: dict = None,
     scatter_kwargs: dict = None,
     **kwargs,
@@ -202,7 +203,10 @@ def biaxial(
         data_plot[color] = adata.obs[color]
 
     g = sns.PairGrid(data_plot, x_vars=marker_x, y_vars=marker_y, hue=color, **kwargs)
-    g.map(sns.kdeplot, levels=n_bins, **kde_kwargs)
+
+    if kde is True:
+        g.map(sns.kdeplot, levels=n_bins, **kde_kwargs)
+
     g.map(sns.scatterplot, s=5, **scatter_kwargs)
     g.add_legend()
 
