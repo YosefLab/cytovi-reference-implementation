@@ -114,13 +114,13 @@ class CytoVI(
         self,
         adata: AnnData,
         n_hidden: int = 128,
-        n_latent: Optional [int] = None,
+        n_latent: Optional[int] = None,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
         protein_likelihood: Literal["normal", "beta"] = "normal",
         latent_distribution: Literal["normal", "ln"] = "normal",
-        encode_backbone_only: Optional [bool] = None,
-        encoder_marker_list: Optional [list] = None,
+        encode_backbone_only: Optional[bool] = None,
+        encoder_marker_list: Optional[list] = None,
         prior_mixture: Optional[bool] = True,
         prior_mixture_k: Optional[int] = None,
         **model_kwargs,
@@ -161,7 +161,11 @@ class CytoVI(
 
             if encoder_marker_mask is not None:
                 enc_marker_intersection = [marker in backbone_markers for marker in encoder_marker_list]
-                probl_markers = [marker for marker, intersection in zip(encoder_marker_list, enc_marker_intersection) if not intersection]
+                probl_markers = [
+                    marker
+                    for marker, intersection in zip(encoder_marker_list, enc_marker_intersection)
+                    if not intersection
+                ]
                 probl_markers_str = ", ".join(probl_markers)
                 if not all(enc_marker_intersection):
                     raise ValueError(
@@ -195,8 +199,7 @@ class CytoVI(
                     "Protein expression must be in the range (0, 1) for beta likelihood. Perform scaling or choose other likelihood."
                 )
 
-
-        self._model_summary_string = (  # noqa: UP032
+        self._model_summary_string = (
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
             "{}, \nprotein_likelihood: {}, latent_distribution: {}, \nMoG prior: {}, n_labels {}, n_proteins: {}, \nImpute missing markers: {}"
         ).format(
@@ -209,11 +212,11 @@ class CytoVI(
             prior_mixture,
             self.summary_stats.n_labels,
             self.summary_stats.n_vars,
-            self.nan_imputation
+            self.nan_imputation,
         )
 
         if self.nan_imputation is True:
-            self._model_summary_string += (f", \nBackbone markers: {backbone_str}")
+            self._model_summary_string += f", \nBackbone markers: {backbone_str}"
 
         self.module = self._module_cls(
             n_input=self.summary_stats.n_vars,
@@ -228,11 +231,10 @@ class CytoVI(
             protein_likelihood=protein_likelihood,
             latent_distribution=latent_distribution,
             encoder_marker_mask=encoder_marker_mask,
-            prior_mixture = prior_mixture,
-            prior_mixture_k = prior_mixture_k,
+            prior_mixture=prior_mixture,
+            prior_mixture_k=prior_mixture_k,
             **model_kwargs,
         )
-
 
         self.init_params_ = self._get_init_params(locals())
 
@@ -371,7 +373,7 @@ class CytoVI(
         update_dict = {
             "lr": lr,
             "adversarial_classifier": adversarial_classifier,
-        #     "reduce_lr_on_plateau": reduce_lr_on_plateau,
+            #     "reduce_lr_on_plateau": reduce_lr_on_plateau,
             "n_epochs_kl_warmup": n_epochs_kl_warmup,
             "n_steps_kl_warmup": n_steps_kl_warmup,
         }
@@ -535,7 +537,7 @@ class CytoVI(
         all_batches = list(np.unique(self.adata_manager.get_from_registry("batch")))
 
         if self.nan_imputation is True:
-            if  nan_warning is True:
+            if nan_warning is True:
                 msg = "detected missing proteins between batches - will impute missing markers"
                 warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 
@@ -563,7 +565,6 @@ class CytoVI(
             transform_batch = _get_batch_code_from_category(
                 self.get_anndata_manager(adata, required=True), transform_batch
             )
-
 
         store_distributions = weights == "importance"
         if store_distributions and len(transform_batch) > 1:
@@ -709,7 +710,7 @@ class CytoVI(
             n_samples=1,
             batch_size=batch_size,
             weights=weights,
-            nan_warning = False,
+            nan_warning=False,
             **importance_weighting_kwargs,
         )
         representation_fn = self.get_latent_representation if filter_outlier_cells else None
@@ -742,7 +743,7 @@ class CytoVI(
             idx1,
             idx2,
             all_stats,
-            scrna_raw_counts_properties, # modify the extended stats summary and include the GMM
+            scrna_raw_counts_properties,  # modify the extended stats summary and include the GMM
             col_names,
             mode,
             batchid1,
@@ -761,8 +762,9 @@ class CytoVI(
         adata_reference: AnnData,
         cat_key: str,
         use_rep: Optional[str] = None,
-        n_neighbors: int = 20
-        ):
+        n_neighbors: int = 20,
+        return_uncertainty: bool = False,
+    ):
         """
         Impute missing categories for the query data based on a reference dataset using a shared representation.
 
@@ -800,7 +802,9 @@ class CytoVI(
                 adata_query.obsm[CYTOVI_DEFAULT_REP] = self.get_latent_representation()
                 use_rep = CYTOVI_DEFAULT_REP
             else:
-                raise ValueError("No shared representation found between reference and query data. Please specify a representation to use.")
+                raise ValueError(
+                    "No shared representation found between reference and query data. Please specify a representation to use."
+                )
 
         # Validate input keys
         validate_obsm_keys(adata_query, use_rep)
@@ -816,9 +820,14 @@ class CytoVI(
         rep_query = adata_query.obsm[use_rep]
 
         # Impute missing categories for the query data
-        imputed_query_cat_indices = impute_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=n_neighbors)
+        imputed_query_cat_indices, uncertainty = impute_with_neighbors(
+            rep_query, rep_ref, cat_encoded_ref, n_neighbors=n_neighbors, compute_uncertainty=return_uncertainty
+        )
 
         # Convert imputed indices back to category labels
         imputed_query_cat = ohe.inverse_transform(np.eye(n_cats)[imputed_query_cat_indices])
 
-        return imputed_query_cat
+        if return_uncertainty:
+            return imputed_query_cat, uncertainty
+        else:
+            return imputed_query_cat
