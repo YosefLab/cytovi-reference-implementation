@@ -29,7 +29,7 @@ class PosteriorPredictiveCheck(PosteriorPredictiveCheck):
     """
     Posterior predictive checks for CytoVI models.
 
-    Inherits from scvi-criticism's PPC class but adds additional funcitonality for non-count flow cytometry data and additional benchmarking methods.
+    Inherits from scvi-criticism's PPC class but adds additional functionality for non-count flow cytometry data and additional benchmarking methods.
     """
 
     def __init__(
@@ -41,6 +41,7 @@ class PosteriorPredictiveCheck(PosteriorPredictiveCheck):
     ):
         count_layer_key = layer_key
         super().__init__(adata, models_dict, count_layer_key, n_samples)
+        self.samples_dataset = _make_dataset_dense(self.samples_dataset)
 
     def store_FA_samples(self, n_samples: int = 10, train_indices = None) -> None:
         """

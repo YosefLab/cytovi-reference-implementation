@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import rich
 import torch
+import torch.distributions as dist
 from anndata import AnnData
 from scvi import settings
 from scvi._types import Number
@@ -22,10 +23,11 @@ from scvi.dataloaders import DataSplitter
 from scvi.distributions._utils import DistributionConcatenator
 from scvi.model._utils import _get_batch_code_from_category, scrna_raw_counts_properties
 from scvi.model.base import ArchesMixin, BaseModelClass, RNASeqMixin, UnsupervisedTrainingMixin, VAEMixin
-from scvi.model.base._utils import _de_core
+from scvi.model.base._de_core import _de_core
 from scvi.train import AdversarialTrainingPlan, TrainRunner
 from scvi.utils import de_dsp, setup_anndata_dsp
 from scvi.utils._docstrings import devices_dsp
+from tqdm import tqdm
 
 from ._constants import CYTOVI_DEFAULT_REP, REGISTRY_KEYS
 from ._module import CytoVAE
@@ -137,7 +139,6 @@ class CytoVI(
 
         if encoder_marker_list is not None:
             validate_marker(adata, encoder_marker_list)
-            encode_backbone_only = False
             encoder_marker_mask = all_markers.isin(encoder_marker_list)
         else:
             encoder_marker_mask = None
@@ -152,7 +153,7 @@ class CytoVI(
             backbone_str = ", ".join(backbone_markers)
             self._use_adversarial_classifier = True
 
-            if encode_backbone_only is None:
+            if encode_backbone_only is None and encoder_marker_list is None:
                 encode_backbone_only = True
             elif encode_backbone_only is False:
                 raise NotImplementedError(
@@ -199,7 +200,12 @@ class CytoVI(
                     "Protein expression must be in the range (0, 1) for beta likelihood. Perform scaling or choose other likelihood."
                 )
 
-        self._model_summary_string = (
+        self.sample_key = self.adata_manager.get_state_registry(
+            REGISTRY_KEYS.SAMPLE_KEY
+            ).original_key
+
+        self._model_summary_string = (  # noqa: UP032
+
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
             "{}, \nprotein_likelihood: {}, latent_distribution: {}, \nMoG prior: {}, n_labels {}, n_proteins: {}, \nImpute missing markers: {}"
         ).format(
@@ -246,6 +252,7 @@ class CytoVI(
         layer: Optional[str] = None,
         batch_key: Optional[str] = None,
         labels_key: Optional[str] = None,
+        sample_key: Optional[str] = None,
         categorical_covariate_keys: Optional[list[str]] = None,
         continuous_covariate_keys: Optional[list[str]] = None,
         nan_layer: Optional[str] = None,
@@ -268,6 +275,7 @@ class CytoVI(
             LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=False),
             CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
             CategoricalObsField(REGISTRY_KEYS.LABELS_KEY, labels_key),
+            CategoricalObsField(REGISTRY_KEYS.SAMPLE_KEY, sample_key),
             CategoricalJointObsField(REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys),
             NumericalJointObsField(REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys),
         ]
@@ -756,6 +764,107 @@ class CytoVI(
         )
 
         return result
+
+    def get_aggregated_posterior(
+        self,
+        adata: AnnData = None,
+        locs: np.ndarray = None,
+        scales: np.ndarray  = None,
+        sample: Union [int, str] = None,
+        indices: Sequence[int] = None,
+        batch_size: int = None,
+        ) -> dist.Distribution:
+        self._check_if_trained(warn=False)
+
+        if locs is not None and scales is not None:
+            qz_loc = torch.from_numpy(locs).T
+            qz_scale = torch.from_numpy(scales).T
+        else:
+            adata = self._validate_anndata(adata)
+
+            if indices is None:
+                indices = np.arange(self.adata.n_obs)
+            if sample is not None:
+                indices = np.intersect1d(
+                    np.array(indices), np.where(adata.obs[self.sample_key] == sample)[0]
+                )
+
+            dataloader = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+
+            qz_locs = []
+            qz_scales = []
+            for tensors in dataloader:
+                outputs = self.module.inference(self.module._get_inference_input(tensors))
+
+                qz_locs.append(outputs["qz"].loc)
+                qz_scales.append(outputs["qz"].scale)
+
+            # transpose because we need num cells to be rightmost dimension for mixture
+            qz_loc = torch.cat(qz_locs, 0).T
+            qz_scale = torch.cat(qz_scales, 0).T
+
+        return dist.MixtureSameFamily(
+            dist.Categorical(torch.ones(qz_loc.shape[1])), dist.Normal(qz_loc, qz_scale)
+        )
+
+    def differential_abundance(
+        self,
+        adata: AnnData = None,
+        locs: np.ndarray = None,
+        scales: np.ndarray  = None,
+        sample_id: np.ndarray  = None,  # sample ids of each latent rep above.
+        sample_cov_keys: list[str] = None,
+        sample_subset: list[str] = None,
+        compute_log_enrichment: bool = False,
+        batch_size: int = 128,
+    ) -> pd.DataFrame:
+        adata = self._validate_anndata(adata)
+
+        if locs is not None and scales is not None:  # if user passes in latent reps directly
+            us = locs
+            variances = scales
+            unique_samples = np.unique(sample_id)
+        else:
+            # return dist so that we can also get the vars, and don't have redundantly get the latent
+            # reps again in get_aggregated_posterior
+            us, variances = self.get_latent_representation(
+                adata, give_mean=True, batch_size=batch_size, return_dist=True
+            )
+
+            unique_samples = adata.obs[self.sample_key].unique()
+
+        log_probs = []
+        for sample_name in tqdm(unique_samples):
+            if locs is not None and scales is not None:
+                indices = np.where(sample_id == sample_name)
+            else:
+                indices = np.where(adata.obs[self.sample_key] == sample_name)[0]
+
+            locs_per_sample = us[indices]
+            scales_per_sample = variances[indices]
+            ap = self.get_aggregated_posterior(self, locs=locs_per_sample, scales=scales_per_sample)
+
+            log_probs_ = []
+            n_splits = max(adata.n_obs // batch_size, 1)
+            for u_rep in np.array_split(us, n_splits):
+                log_probs_.append(ap.log_prob(torch.tensor(u_rep)).sum(-1, keepdims=True).cpu())
+
+            log_probs.append(np.concatenate(log_probs_, axis=0))
+
+        log_probs = np.concatenate(log_probs, 1)
+
+
+        if locs is not None and scales is not None:
+            indices = np.arange(locs.shape[0])
+        else:
+            indices = adata.obs_names.to_numpy()
+
+        columns = unique_samples
+
+        log_probs_df = pd.DataFrame(data=log_probs, index=indices, columns=columns)
+
+        return log_probs_df
+
 
     def impute_categories_from_reference(
         self,

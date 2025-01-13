@@ -82,7 +82,7 @@ def histogram(
     if groupby is not None:
         data_plot[groupby] = adata.obs[groupby]
 
-    data_plot_melt = data_plot.melt(id_vars=groupby)
+    data_plot_melt = data_plot.melt(id_vars=groupby, var_name='variable', value_name='value')
 
     # generate the plot
     g = sns.FacetGrid(
@@ -118,6 +118,7 @@ def biaxial(
     n_obs: int = 10000,
     sample_color_groups: bool = False,
     save: Union[bool, str] = None,
+    kde: bool = True,
     kde_kwargs: dict = None,
     scatter_kwargs: dict = None,
     **kwargs,
@@ -165,6 +166,17 @@ def biaxial(
     if isinstance(marker_y, str):
         marker_y = [marker_y]
 
+    if marker_x is None and marker_y is None:
+        raise ValueError("At least one of marker_x or marker_y must be specified.")
+    elif marker_x is None:
+        marker_x = [*adata.var_names]
+        marker_x = list(set(marker_x) - set(marker_y))
+    elif marker_y is None:
+        marker_y = [*adata.var_names]
+        marker_y = list(set(marker_y) - set(marker_x))
+    else:
+        marker_x = list(set(marker_x) - set(marker_y))
+
     validate_marker(adata, marker_x)
     validate_marker(adata, marker_y)
     validate_obs_keys(adata, color)
@@ -183,10 +195,6 @@ def biaxial(
         else:
             adata = subsample(adata, n_obs=n_obs)
 
-    # remove marker from marker_x if it is also in marker_y
-    if marker_x is not None and marker_y is not None:
-        marker_x = list(set(marker_x) - set(marker_y))
-
     marker = marker_x + marker_y
 
     data_plot = adata[:, marker].to_df(layer=layer_key)
@@ -195,7 +203,10 @@ def biaxial(
         data_plot[color] = adata.obs[color]
 
     g = sns.PairGrid(data_plot, x_vars=marker_x, y_vars=marker_y, hue=color, **kwargs)
-    g.map(sns.kdeplot, levels=n_bins, **kde_kwargs)
+
+    if kde is True:
+        g.map(sns.kdeplot, levels=n_bins, **kde_kwargs)
+
     g.map(sns.scatterplot, s=5, **scatter_kwargs)
     g.add_legend()
 
