@@ -94,9 +94,9 @@ def impute_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=5, co
     category_sums = np.sum(neighbor_categories, axis=1)  # Shape: (n_query, n_categories)
 
     if compute_uncertainty:
-        # Calculate the entropy of the category distribution for each query point
-        category_sums_normalized = category_sums / np.sum(category_sums, axis=1, keepdims=True)
-        uncertainty = -np.sum(category_sums_normalized * np.log(category_sums_normalized + 1e-10), axis=1)
+        # Calculate the uncertainty for each query point
+        category_prop = category_sums / np.sum(category_sums, axis=1, keepdims=True)
+        uncertainty = 1 - np.max(category_prop, axis=1)
     else:
         uncertainty = None
 
