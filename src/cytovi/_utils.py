@@ -79,7 +79,7 @@ def encode_categories(adata, cat_key):
     return ohe.fit_transform(adata.obs[cat_key].values.reshape(-1, 1)), ohe
 
 
-def impute_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=5, compute_uncertainty=False):
+def impute_cats_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=5, compute_uncertainty=False):
     """Use pynndescent to find nearest neighbors and impute missing categories."""
     nn_index = pynndescent.NNDescent(rep_ref, n_neighbors=n_neighbors, metric="euclidean")
 
@@ -104,3 +104,28 @@ def impute_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=5, co
     imputed_cat_indices = np.argmax(category_sums, axis=1)  # Shape: (n_query,)
 
     return imputed_cat_indices, uncertainty
+
+def impute_expr_with_neighbors(rep_query, rep_ref, expr_data_ref, n_neighbors=5, compute_uncertainty=False):
+    """Use pynndescent to find nearest neighbors and impute missing expression."""
+    nn_index = pynndescent.NNDescent(rep_ref, n_neighbors=n_neighbors, metric="euclidean")
+
+    # Find the nearest neighbors for query data within the reference data
+    indices, distances = nn_index.query(rep_query, k=n_neighbors)
+
+    # Get the neighbor categories for each query point
+    neighbor_expr = expr_data_ref[indices]  # Shape: (n_query, n_neighbors, n_categories)
+
+    # Sum the one-hot encoded categories for each query point's neighbors
+    # This gives the count of each category across the neighbors
+    imputed_expr = np.mean(neighbor_expr, axis=1)  # Shape: (n_query, n_categories)
+
+    if compute_uncertainty: # note: not implemented yet
+        raise NotImplementedError("Uncertainty not implemented yet.")
+        uncertainty = None
+    else:
+        uncertainty = None
+
+    # # Find the index of the most frequent category for each query point
+    # imputed_cat_indices = np.argmax(category_sums, axis=1)  # Shape: (n_query,)
+
+    return imputed_expr, uncertainty

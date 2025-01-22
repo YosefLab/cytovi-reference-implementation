@@ -35,9 +35,11 @@ from ._utils import (
     clip_lfc_factory,
     encode_categories,
     get_n_latent_heuristic,
-    impute_with_neighbors,
+    impute_cats_with_neighbors,
+    impute_expr_with_neighbors,
     validate_expression_range,
     validate_marker,
+    validate_layer_key,
     validate_obs_keys,
     validate_obsm_keys,
 )
@@ -202,6 +204,10 @@ class CytoVI(
 
         self.sample_key = self.adata_manager.get_state_registry(
             REGISTRY_KEYS.SAMPLE_KEY
+            ).original_key
+
+        self.batch_key = self.adata_manager.get_state_registry(
+            REGISTRY_KEYS.BATCH_KEY
             ).original_key
 
         self._model_summary_string = (  # noqa: UP032
@@ -929,7 +935,7 @@ class CytoVI(
         rep_query = adata_query.obsm[use_rep]
 
         # Impute missing categories for the query data
-        imputed_query_cat_indices, uncertainty = impute_with_neighbors(
+        imputed_query_cat_indices, uncertainty = impute_cats_with_neighbors(
             rep_query, rep_ref, cat_encoded_ref, n_neighbors=n_neighbors, compute_uncertainty=return_uncertainty
         )
 
@@ -940,3 +946,112 @@ class CytoVI(
             return imputed_query_cat, uncertainty
         else:
             return imputed_query_cat
+        
+
+
+    def impute_rna_from_reference(
+            self: AnnData,
+            reference_batch: str,
+            adata_rna: AnnData,
+            layer_key: str,
+            use_rep: Optional[str] = None,
+            n_neighbors: int = 20,
+            compute_uncertainty: bool = False,
+            return_query_only: bool = False,
+        ):
+            """
+            Impute expression data from missing modality for the query dataset based on a reference dataset using a shared representation.
+
+            Parameters
+            ----------
+            adata : AnnData
+                Annotated data matrix containing both reference and query data.
+            reference_batch : str
+                Identifier for the reference batch in `adata.obs['technology']`.
+            adata_to_impute : AnnData
+                Annotated data matrix containing the expression data to impute.
+            layer_key : str
+                Key in the `.layers` attribute of `adata_to_impute` for the reference expression data.
+            use_rep : str, optional
+                Key in the `.obsm` attribute to use as the representation space (e.g., latent space). 
+                If `None`, defaults to `X_CytoVI`.
+            n_neighbors : int, optional (default: 20)
+                Number of nearest neighbors to use for imputation.
+            compute_uncertainty : bool, optional (default: False)
+                If `True`, also computes the uncertainty of the imputation.
+            return_query_only : bool, optional (default: False)
+                If `True`, return only the imputed query dataset as an AnnData object.
+
+            Returns
+            -------
+            AnnData
+                Imputed AnnData object. If `return_query_only` is `True`, only the query dataset is returned.
+            If `return_uncertainty` is `True`, also returns the uncertainty matrix.
+            """
+            adata = self.adata
+            batch_key = self.batch_key
+
+            # validate input
+            validate_obsm_keys(adata, use_rep)
+            validate_layer_key(adata_rna, layer_key)
+
+            # retrieve reference and query indices
+            reference_indices = adata.obs_names[adata.obs[batch_key] == reference_batch]
+            query_indices = adata.obs_names[adata.obs[batch_key] != reference_batch]
+
+            # validate that query indices are in to impute adata
+            if not all(idx in adata_rna.obs_names for idx in reference_indices):
+                raise ValueError("Some query indices are not present in `adata_to_impute`.")
+
+            # get representations
+            if use_rep is None:
+                obsm_keys = adata.obsm.keys()
+
+                if CYTOVI_DEFAULT_REP in obsm_keys:
+                    use_rep = CYTOVI_DEFAULT_REP
+                else:
+                    pass
+                    adata.obsm[CYTOVI_DEFAULT_REP] = self.get_latent_representation()
+                    use_rep = CYTOVI_DEFAULT_REP
+
+            # Get representations and reference expression
+            rep_ref = adata[reference_indices,:].obsm[use_rep]
+            rep_query = adata[query_indices,:].obsm[use_rep]
+            expr_data_ref = adata_rna[reference_indices,:].layers[layer_key]
+
+            # Impute expression in query
+            imputed_expr_query, uncertainty = impute_expr_with_neighbors(
+                rep_query, rep_ref, expr_data_ref, n_neighbors=n_neighbors, compute_uncertainty=compute_uncertainty
+            )
+
+            # create anndata for imputed query dataset
+            adata_imputed_query = AnnData(
+                X = imputed_expr_query,
+                obs = adata[query_indices,:].obs,
+                obsm = adata[query_indices,:].obsm,
+                var = adata_rna.var,
+                layers={layer_key: imputed_expr_query},
+            )
+
+            if return_query_only:
+                return adata_imputed_query 
+
+            # assemble new anndata with imputed expression
+            expr_comb = np.concatenate([expr_data_ref, imputed_expr_query], axis=0)
+            obs_comb = adata.obs.loc[np.concatenate([reference_indices, query_indices]), :]
+
+            # restore original indices and add metadata
+            adata_combined = AnnData(
+                X = expr_comb, 
+                obs = obs_comb, 
+                var=adata_rna.var)
+        
+            adata_imputed = AnnData(
+                X=adata_combined[adata.obs_names].X,
+                obs=adata.obs,
+                var=adata_rna.var,
+                obsm=adata.obsm,
+                layers={layer_key: adata_combined[adata.obs_names].X},
+            )
+
+            return adata_imputed
