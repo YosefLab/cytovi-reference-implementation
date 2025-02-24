@@ -940,7 +940,7 @@ class CytoVI(
         )
 
         # Convert imputed indices back to category labels
-        imputed_query_cat = ohe.inverse_transform(np.eye(n_cats)[imputed_query_cat_indices])
+        imputed_query_cat = ohe.inverse_transform(np.eye(n_cats)[imputed_query_cat_indices]).reshape(-1)
 
         if return_uncertainty:
             return imputed_query_cat, uncertainty

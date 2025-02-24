@@ -75,7 +75,7 @@ def validate_expression_range(data, min_exp, max_exp):
 
 def encode_categories(adata, cat_key):
     """One-Hot encode the categories for the given key."""
-    ohe = OneHotEncoder(sparse=False, handle_unknown="ignore")
+    ohe = OneHotEncoder(sparse_output=False, handle_unknown="ignore")
     return ohe.fit_transform(adata.obs[cat_key].values.reshape(-1, 1)), ohe
 
 
