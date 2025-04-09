@@ -7,7 +7,7 @@ from anndata import AnnData
 from scvi import settings
 
 from cytovi._utils import apply_scaling, validate_layer_key, validate_marker, validate_obs_keys
-
+from cytovi._constants import CYTOVI_SCATTER_FEATS
 
 def arcsinh(
     adata: AnnData,
@@ -51,8 +51,7 @@ def arcsinh(
     adata.layers[transformed_layer_key] = np.arcsinh(transformed_layer)
 
     if not transform_scatter:
-        scatter_prefix = ("FSC", "Fsc", "fsc", "SSC", "Ssc", "ssc")  # turn this into a constant
-        is_scatter = [marker.startswith(scatter_prefix) for marker in adata.var_names]
+        is_scatter = [marker.startswith(CYTOVI_SCATTER_FEATS) for marker in adata.var_names]
 
         if any(is_scatter):
             scatter_str = ", ".join(adata.var_names[is_scatter])

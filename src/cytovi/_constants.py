@@ -21,3 +21,4 @@ class _REGISTRY_KEYS_NT(NamedTuple):
 REGISTRY_KEYS = _REGISTRY_KEYS_NT()
 
 CYTOVI_DEFAULT_REP = 'X_CytoVI'
+CYTOVI_SCATTER_FEATS = ("FSC", "Fsc", "fsc", "SSC", "Ssc", "ssc")
