@@ -757,7 +757,7 @@ class CytoVI(
             idx1,
             idx2,
             all_stats,
-            scrna_raw_counts_properties,  # modify the extended stats summary and include the GMM
+            scrna_raw_counts_properties,
             col_names,
             mode,
             batchid1,
