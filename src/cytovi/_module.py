@@ -498,7 +498,6 @@ class DecoderCytoVI(nn.Module):
         self.protein_likelihood = protein_likelihood
         self.decoder_param_eps = decoder_param_eps
 
-        # param1 decoder activation, note: potentially remove this if you stick to beta dist
         if scale_activation == "softplus":
             self.px_param1_decoder = nn.Sequential(
                 nn.Linear(n_hidden, n_output),

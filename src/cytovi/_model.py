@@ -315,11 +315,9 @@ class CytoVI(
         devices: Union[int, list[int], str] = "auto",
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
-        shuffle_set_split: bool = True,
         batch_size: int = 128,
         early_stopping: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
-        # reduce_lr_on_plateau: bool = True,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400,
         adversarial_classifier: Optional[bool] = None,
@@ -376,18 +374,10 @@ class CytoVI(
         if adversarial_classifier is None:
             adversarial_classifier = self._use_adversarial_classifier
 
-        # n_steps_kl_warmup = (
-        #     n_steps_kl_warmup
-        #     if n_steps_kl_warmup is not None
-        #     else int(0.75 * self.adata.n_obs)
-        # )
-        # if reduce_lr_on_plateau:
-        #     check_val_every_n_epoch = 1
 
         update_dict = {
             "lr": lr,
             "adversarial_classifier": adversarial_classifier,
-            #     "reduce_lr_on_plateau": reduce_lr_on_plateau,
             "n_epochs_kl_warmup": n_epochs_kl_warmup,
             "n_steps_kl_warmup": n_steps_kl_warmup,
         }
@@ -402,7 +392,6 @@ class CytoVI(
             self.adata_manager,
             train_size=train_size,
             validation_size=validation_size,
-            # shuffle_set_split=shuffle_set_split,
             batch_size=batch_size,
         )
         training_plan = self._training_plan_cls(self.module, **plan_kwargs)
@@ -411,7 +400,6 @@ class CytoVI(
             training_plan=training_plan,
             data_splitter=data_splitter,
             max_epochs=max_epochs,
-            # use_gpu=use_gpu,
             accelerator=accelerator,
             devices=devices,
             early_stopping=early_stopping,
