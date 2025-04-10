@@ -841,12 +841,12 @@ class CytoVI(
         """
         adata = self._validate_anndata(adata)
 
-        us = self.get_latent_representation(
+        zs = self.get_latent_representation(
             batch_size=batch_size, return_dist=False, give_mean=True
         )
         
         unique_samples = adata.obs[self.sample_key].unique()
-        dataloader = torch.utils.data.DataLoader(us, batch_size=batch_size)
+        dataloader = torch.utils.data.DataLoader(zs, batch_size=batch_size)
         log_probs = []
         for sample_name in tqdm(unique_samples):
             indices = np.where(adata.obs[self.sample_key] == sample_name)[0]
@@ -855,9 +855,9 @@ class CytoVI(
 
             ap = self.get_aggregated_posterior(adata=adata, indices=indices, dof=dof)
             log_probs_ = []
-            for u_rep in dataloader:
-                u_rep = u_rep.to(self.device)
-                log_probs_.append(ap.log_prob(u_rep).sum(-1, keepdims=True))
+            for z_rep in dataloader:
+                z_rep = z_rep.to(self.device)
+                log_probs_.append(ap.log_prob(z_rep).sum(-1, keepdims=True))
             log_probs.append(torch.cat(log_probs_, axis=0).cpu().numpy())
 
         log_probs = np.concatenate(log_probs, 1)
