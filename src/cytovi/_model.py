@@ -762,102 +762,108 @@ class CytoVI(
     def get_aggregated_posterior(
         self,
         adata: AnnData = None,
-        locs: np.ndarray = None,
-        scales: np.ndarray  = None,
         sample: Union [int, str] = None,
         indices: Sequence[int] = None,
         batch_size: int = None,
+        dof: float | None = 3.,
         ) -> dist.Distribution:
+        """Compute the aggregated posterior over the ``u`` latent representations.
+
+        Parameters
+        ----------
+        adata
+            AnnData object to use. Defaults to the AnnData object used to initialize the model.
+        sample
+            Name or index of the sample to filter on. If ``None``, uses all cells.
+        indices
+            Indices of cells to use.
+        batch_size
+            Batch size to use for computing the latent representation.
+        dof
+            Degrees of freedom for the Student's t-distribution components. If ``None``, components are Normal.
+
+        Returns
+        -------
+        A mixture distribution of the aggregated posterior.
+        """
         self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
 
-        if locs is not None and scales is not None:
-            qz_loc = torch.from_numpy(locs).T
-            qz_scale = torch.from_numpy(scales).T
+
+        if indices is None:
+            indices = np.arange(self.adata.n_obs)
+        if sample is not None:
+            indices = np.intersect1d(
+                np.array(indices), np.where(adata.obs[self.sample_key] == sample)[0]
+            )
+
+        dataloader = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        qu_loc, qu_scale = self.get_latent_representation(batch_size=batch_size, return_dist=True, dataloader=dataloader, give_mean=True)
+
+        qu_loc = torch.tensor(qu_loc, device=self.device).T
+        qu_scale = torch.tensor(qu_scale, device=self.device).T
+        
+        if dof is None:
+            components = dist.Normal(qu_loc, qu_scale)
         else:
-            adata = self._validate_anndata(adata)
-
-            if indices is None:
-                indices = np.arange(self.adata.n_obs)
-            if sample is not None:
-                indices = np.intersect1d(
-                    np.array(indices), np.where(adata.obs[self.sample_key] == sample)[0]
-                )
-
-            dataloader = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
-
-            qz_locs = []
-            qz_scales = []
-            for tensors in dataloader:
-                outputs = self.module.inference(self.module._get_inference_input(tensors))
-
-                qz_locs.append(outputs["qz"].loc)
-                qz_scales.append(outputs["qz"].scale)
-
-            # transpose because we need num cells to be rightmost dimension for mixture
-            qz_loc = torch.cat(qz_locs, 0).T
-            qz_scale = torch.cat(qz_scales, 0).T
-
+            components = dist.StudentT(dof, qu_loc, qu_scale)
         return dist.MixtureSameFamily(
-            dist.Categorical(torch.ones(qz_loc.shape[1])), dist.Normal(qz_loc, qz_scale)
-        )
+            dist.Categorical(logits=torch.ones(qu_loc.shape[1], device=qu_loc.device)), components)
 
     def differential_abundance(
         self,
-        adata: AnnData = None,
-        locs: np.ndarray = None,
-        scales: np.ndarray  = None,
-        sample_id: np.ndarray  = None,  # sample ids of each latent rep above.
-        sample_cov_keys: list[str] = None,
-        sample_subset: list[str] = None,
-        compute_log_enrichment: bool = False,
+        adata: AnnData | None = None,
         batch_size: int = 128,
+        downsample_cells: int | None = None,
+        dof: float | None = None,
     ) -> pd.DataFrame:
+        """Compute the differential abundance between samples.
+
+        Computes the logarithm of the ratio of the probabilities of each sample conditioned on the
+        estimated aggregate posterior distribution of each cell.
+
+        Parameters
+        ----------
+        adata
+            The data object to compute the differential abundance for.
+        batch_size
+            Minibatch size for computing the differential abundance.
+        downsample_cells
+            Number of cells to subset to before computing the differential abundance.
+        dof
+            Degrees of freedom for the Student's t-distribution components for aggregated posterior. If ``None``, components are Normal.
+
+        Returns
+        -------
+        DataFrame of shape (n_cells, n_samples) containing the log probabilities
+        for each cell across samples. The rows correspond to cell names from `adata.obs_names`,
+        and the columns correspond to unique sample identifiers.
+        """
         adata = self._validate_anndata(adata)
 
-        if locs is not None and scales is not None:  # if user passes in latent reps directly
-            us = locs
-            variances = scales
-            unique_samples = np.unique(sample_id)
-        else:
-            # return dist so that we can also get the vars, and don't have redundantly get the latent
-            # reps again in get_aggregated_posterior
-            us, variances = self.get_latent_representation(
-                adata, give_mean=True, batch_size=batch_size, return_dist=True
-            )
-
-            unique_samples = adata.obs[self.sample_key].unique()
-
+        us = self.get_latent_representation(
+            batch_size=batch_size, return_dist=False, give_mean=True
+        )
+        
+        unique_samples = adata.obs[self.sample_key].unique()
+        dataloader = torch.utils.data.DataLoader(us, batch_size=batch_size)
         log_probs = []
         for sample_name in tqdm(unique_samples):
-            if locs is not None and scales is not None:
-                indices = np.where(sample_id == sample_name)
-            else:
-                indices = np.where(adata.obs[self.sample_key] == sample_name)[0]
+            indices = np.where(adata.obs[self.sample_key] == sample_name)[0]
+            if downsample_cells is not None and downsample_cells < indices.shape[0]:
+                indices = np.random.choice(indices, downsample_cells, replace=False)
 
-            locs_per_sample = us[indices]
-            scales_per_sample = variances[indices]
-            ap = self.get_aggregated_posterior(self, locs=locs_per_sample, scales=scales_per_sample)
-
+            ap = self.get_aggregated_posterior(adata=adata, indices=indices, dof=dof)
             log_probs_ = []
-            n_splits = max(adata.n_obs // batch_size, 1)
-            for u_rep in np.array_split(us, n_splits):
-                log_probs_.append(ap.log_prob(torch.tensor(u_rep)).sum(-1, keepdims=True).cpu())
-
-            log_probs.append(np.concatenate(log_probs_, axis=0))
+            for u_rep in dataloader:
+                u_rep = u_rep.to(self.device)
+                log_probs_.append(ap.log_prob(u_rep).sum(-1, keepdims=True))
+            log_probs.append(torch.cat(log_probs_, axis=0).cpu().numpy())
 
         log_probs = np.concatenate(log_probs, 1)
-
-
-        if locs is not None and scales is not None:
-            indices = np.arange(locs.shape[0])
-        else:
-            indices = adata.obs_names.to_numpy()
-
-        columns = unique_samples
-
-        log_probs_df = pd.DataFrame(data=log_probs, index=indices, columns=columns)
-
+        log_probs_df = pd.DataFrame(data=log_probs, index=adata.obs_names.to_numpy(), columns=unique_samples)
         return log_probs_df
+
 
 
     def impute_categories_from_reference(
