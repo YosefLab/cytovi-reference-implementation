@@ -83,24 +83,17 @@ def impute_cats_with_neighbors(rep_query, rep_ref, cat_encoded_ref, n_neighbors=
     """Use pynndescent to find nearest neighbors and impute missing categories."""
     nn_index = pynndescent.NNDescent(rep_ref, n_neighbors=n_neighbors, metric="euclidean")
 
-    # Find the nearest neighbors for query data within the reference data
     indices, distances = nn_index.query(rep_query, k=n_neighbors)
-
-    # Get the neighbor categories for each query point
     neighbor_categories = cat_encoded_ref[indices]  # Shape: (n_query, n_neighbors, n_categories)
 
-    # Sum the one-hot encoded categories for each query point's neighbors
-    # This gives the count of each category across the neighbors
     category_sums = np.sum(neighbor_categories, axis=1)  # Shape: (n_query, n_categories)
 
     if compute_uncertainty:
-        # Calculate the uncertainty for each query point
         category_prop = category_sums / np.sum(category_sums, axis=1, keepdims=True)
         uncertainty = 1 - np.max(category_prop, axis=1)
     else:
         uncertainty = None
 
-    # Find the index of the most frequent category for each query point
     imputed_cat_indices = np.argmax(category_sums, axis=1)  # Shape: (n_query,)
 
     return imputed_cat_indices, uncertainty
@@ -109,23 +102,15 @@ def impute_expr_with_neighbors(rep_query, rep_ref, expr_data_ref, n_neighbors=5,
     """Use pynndescent to find nearest neighbors and impute missing expression."""
     nn_index = pynndescent.NNDescent(rep_ref, n_neighbors=n_neighbors, metric="euclidean")
 
-    # Find the nearest neighbors for query data within the reference data
     indices, distances = nn_index.query(rep_query, k=n_neighbors)
+    neighbor_expr = expr_data_ref[indices]  # Shape: (n_query, n_neighbors, expr_dim)
 
-    # Get the neighbor categories for each query point
-    neighbor_expr = expr_data_ref[indices]  # Shape: (n_query, n_neighbors, n_categories)
-
-    # Sum the one-hot encoded categories for each query point's neighbors
-    # This gives the count of each category across the neighbors
-    imputed_expr = np.mean(neighbor_expr, axis=1)  # Shape: (n_query, n_categories)
+    imputed_expr = np.mean(neighbor_expr, axis=1)  # Shape: (n_query, expr_dim)
 
     if compute_uncertainty: # note: not implemented yet
         raise NotImplementedError("Uncertainty not implemented yet.")
         uncertainty = None
     else:
         uncertainty = None
-
-    # # Find the index of the most frequent category for each query point
-    # imputed_cat_indices = np.argmax(category_sums, axis=1)  # Shape: (n_query,)
 
     return imputed_expr, uncertainty
