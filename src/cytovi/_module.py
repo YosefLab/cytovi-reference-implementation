@@ -502,7 +502,7 @@ class DecoderCytoVI(nn.Module):
         use_batch_norm: bool = False,
         use_layer_norm: bool = False,
         scale_activation: Literal["softplus", None] = None,
-        protein_likelihood: [Literal["normal", "beta"]] = "normal",
+        protein_likelihood: Literal["normal", "beta"] = "normal",
         decoder_param_eps: float = 1e-6,
     ):
         super().__init__()
