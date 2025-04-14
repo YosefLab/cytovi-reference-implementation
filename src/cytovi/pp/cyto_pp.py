@@ -28,6 +28,7 @@ def arcsinh(
         transformed_layer_key (str): Key for the layer in the AnnData object, where the transformed expression will be saved.
         global_scaling_factor (float): The global scaling factor to apply.
         scaling_dict (Optional[Dict[str, float]]): A dictionary of specific scaling factors for markers.
+        transform_scatter (bool): If True, scatter features are omitted from the transformation.
         inplace (bool): If True, the transformation is applied in place. If False, a new AnnData object is returned.
 
     Returns
@@ -60,7 +61,7 @@ def arcsinh(
 
         if any(is_scatter):
             scatter_str = ", ".join(adata.var_names[is_scatter])
-            msg = f"Detected scatter features, which are omited for transformation. \nScatter features: {scatter_str}"
+            msg = f"Detected scatter features, which are omitted for transformation. \nScatter features: {scatter_str}"
             warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 
             adata.layers[transformed_layer_key][:, is_scatter] = adata.layers[raw_layer_key][:, is_scatter]
@@ -81,14 +82,23 @@ def logp(
 
     Parameters
     ----------
-        adata (AnnData): The AnnData object to normalize.
-        raw_layer_key (str): The key of the raw layer to be transformed.
-        transformed_layer_key (str): The key to store the transfromed data in `adata.layers`.
-        inplace (bool): If True, the normalization is applied in place. If False, a new AnnData object is returned.
+    adata : AnnData
+        The AnnData object to normalize.
+    raw_layer_key : str, optional
+        The key of the raw layer to be transformed. Default is "raw".
+    transformed_layer_key : str, optional
+        The key to store the transformed data in `adata.layers`. Default is "transformed".
+    offset : float, optional
+        The offset value to add before taking the logarithm. Default is 1.0.
+    transform_scatter : bool, optional
+        If True, scatter features are omitted from transformation. Default is False.
+    inplace : bool, optional
+        If True, the normalization is applied in place. If False, a new AnnData object is returned. Default is True.
 
     Returns
     -------
-        Optional[AnnData]: If inplace is False, returns the normalized AnnData object. Otherwise, returns None.
+    Optional[AnnData]
+        If inplace is False, returns the normalized AnnData object. Otherwise, returns None.
     """
     validate_layer_key(adata, raw_layer_key)
 
@@ -107,7 +117,7 @@ def logp(
 
         if any(is_scatter):
             scatter_str = ", ".join(adata.var_names[is_scatter])
-            msg = f"Detected scatter features, which are omited for transformation. \nScatter features: {scatter_str}"
+            msg = f"Detected scatter features, which are omitted for transformation. \nScatter features: {scatter_str}"
             warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 
             adata.layers[transformed_layer_key][:, is_scatter] = adata.layers[raw_layer_key][:, is_scatter]
@@ -227,13 +237,21 @@ def merge_batches(
 
     Parameters
     ----------
-        adata_list (List[AnnData]): List of AnnData objects to be merged.
-        mask_layer_key (str): The key to store the mask layer in `adata.layers`.
-        scaled_layer_key (str): The key of the scaled layer.
+    adata_list : List[AnnData]
+        List of AnnData objects to be merged.
+    mask_layer_key : str, optional
+        The key to store the mask layer in `adata.layers`.
+    batch_key : str, optional
+        The key for the batch information in `adata.obs`.
+    scaled_layer_key : str, optional
+        The key of the scaled layer.
+    nan_layer_registration : bool, optional
+        Whether to register a nan layer for imputation of missing proteins.
 
     Returns
     -------
-        AnnData: The merged AnnData object.
+    AnnData
+        The merged AnnData object.
     """
     # check if there are NaNs before merging and validate layers
     for batch, adata_batch in enumerate(adata_list):
@@ -285,14 +303,33 @@ def subsample(
 
     Parameters
     ----------
-        adata (AnnData): The AnnData object to downsample.
-        n_samples (int): The number of samples to downsample to.
-        random_state (int): The random state to use for the downsampling.
-        inplace (bool): If True, the downsampling is applied in place. If False, a new AnnData object is returned.
+    adata : AnnData
+        The AnnData object to downsample.
+    n_obs : int, optional
+        The number of observations to downsample to. Default is 10000.
+    random_state : int, optional
+        The random state to use for the downsampling. Default is 0.
+    replace : bool, optional
+        If True, the downsampling is applied with replacement. If False, a new AnnData object is returned. Default is False.
+    groupby : str, optional
+        The column name in `adata.obs` to group the observations by. Default is None.
+    n_obs_group : int, optional
+        The number of observations to downsample to within each group. If not provided, it is calculated as `n_obs` divided by the number of unique groups. Default is None.
 
     Returns
     -------
-        Optional[AnnData]: If inplace is False, returns the downsampled AnnData object. Otherwise, returns None.
+    AnnData or None
+        If `replace` is False, returns the downsampled AnnData object. Otherwise, returns None.
+
+    Raises
+    ------
+    ValueError
+        If the observations in `adata` are not unique.
+    ValueError
+        If the specified `groupby` column is not found in `adata.obs`.
+    UserWarning
+        If a group has fewer observations than `n_obs_group` and `replace` is False.
+
     """
     if len(adata.obs.index) != len(set(adata.obs.index)):
         msg = "Observations are not unique. Cannot subsample. Call `.obs_names_make_unique` before."
@@ -310,8 +347,8 @@ def subsample(
             for group in group_cats:
                 if len(adata.obs[adata.obs[groupby] == group]) < n_obs_group:
                     msg = (
-                        f"Group {group} has less observations than {n_obs_group} observations."
-                        + "Taking all group observations. Set replace to True to sample with replacement."
+                        f"Group {group} has fewer observations than {n_obs_group} observations."
+                        + " Taking all group observations. Set replace to True to sample with replacement."
                     )
                     warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 

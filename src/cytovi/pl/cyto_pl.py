@@ -41,20 +41,42 @@ def histogram(
     layer_key : str, optional
         Key for the layer in AnnData.
 
+    downsample : bool, optional
+        Whether to downsample the data if there are too many observations.
+
+    n_obs : int, optional
+        Number of observations to subsample if downsample is True.
+
+    col_wrap : int, optional
+        Number of columns to wrap the plots. If None, it is calculated based on the number of markers.
+
+    tight_layout : bool, optional
+        Whether to use tight layout for the plot.
+
+    save : Union[bool, str], optional
+        If True, the plot is saved as "marker_histogram.png". If a string is provided, the plot is saved with the given filename.
+
+    return_plot : bool, optional
+        Whether to return the FacetGrid object.
+
+    kde_kwargs : dict, optional
+        Additional keyword arguments to pass to Seaborn's kdeplot.
+
     **kwargs : additional keyword arguments
         Additional arguments to pass to Seaborn's FacetGrid.
 
     Returns
     -------
-    None
+    None or sns.FacetGrid
+        If return_plot is True, returns the FacetGrid object. Otherwise, returns None.
 
     Example:
     ----------
     # Plot density plots for specific markers
-    plot_marker_histograms(adata, marker=['Marker1', 'Marker2'], group_by='Condition')
+    cytovi.pl.histogram(adata, marker=['CD3', 'CD4'], group_by='Condition')
 
     # Plot density plots for all markers
-    plot_marker_histograms(adata, marker='all', group_by='Batch')
+    cytovi.pl.histogram(adata, marker='all', group_by='Batch')
     """
     if kde_kwargs is None:
         kde_kwargs = {}
@@ -137,14 +159,35 @@ def biaxial(
     marker_y : Union[str, List[str]], optional
         Variable name(s) to be plotted on the y-axis.
 
-    group_by : str, optional
-        Key for grouping or categorizing the data.
+    color : str, optional
+        Variable name to be used for coloring the scatter plots.
 
     n_bins : int, optional
         Number of levels for density contours in kdeplot.
 
     layer_key : str, optional
         Key for the layer in AnnData.
+
+    downsample : bool, optional
+        Whether to downsample the data if there are too many observations.
+
+    n_obs : int, optional
+        Number of observations to keep if downsampling is enabled.
+
+    sample_color_groups : bool, optional
+        Whether to sample observations within each color group if downsampling is enabled.
+
+    save : Union[bool, str], optional
+        If True, save the plot as "marker_histogram.png". If a string is provided, save the plot with the given filename.
+
+    kde : bool, optional
+        Whether to include density contours in the plot.
+
+    kde_kwargs : dict, optional
+        Additional keyword arguments to pass to Seaborn's kdeplot.
+
+    scatter_kwargs : dict, optional
+        Additional keyword arguments to pass to Seaborn's scatterplot.
 
     **kwargs : additional keyword arguments
         Additional arguments to pass to Seaborn's PairGrid.
@@ -156,10 +199,10 @@ def biaxial(
     Example
     -------
     # Plot biaxial plots for specific markers
-    plot_biaxial(adata, marker_x='Marker1', marker_y='Marker2', group_by='Condition')
+    cytovi.pl.biaxial(adata, marker_x='CD3', marker_y='CD4', color='Condition')
 
     # Plot biaxial plots for multiple markers
-    plot_biaxial(adata, marker_x=['GeneA', 'GeneB'], marker_y='GeneC', group_by='Batch')
+    cytovi.pl.biaxial(adata, marker_x=['CD8', 'CD20'], marker_y='CD56', color='batch')
     """
     if isinstance(marker_x, str):
         marker_x = [marker_x]
