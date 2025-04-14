@@ -19,65 +19,68 @@ torch.backends.cudnn.benchmark = True
 class CytoVAE(BaseModuleClass):
     """Variational auto-encoder model for Cytometry.
 
-    This is an implementation of the scVI model described in :cite:p:`Lopez18` adopted for cytometry data.
+    This is an implementation of the CytoVI model.
 
     Parameters
     ----------
-    n_input
-        Number of input genes
-    n_batch
-        Number of batches, if 0, no batch correction is performed.
-    n_labels
-        Number of labels
-    n_hidden
-        Number of nodes per hidden layer
-    n_latent
-        Dimensionality of the latent space
-    n_layers
-        Number of hidden layers used for encoder and decoder NNs
-    n_continuous_cov
-        Number of continuous covarites
-    n_cats_per_cov
-        Number of categories for each extra categorical covariate
-    dropout_rate
-        Dropout rate for neural networks
-    log_variational
-        Log(data+1) prior to encoding for numerical stability. Not normalization.
-    protein_likelihood
-        One of
-        * ``'nb'`` - Negative binomial distribution
-        * ``'zinb'`` - Zero-inflated negative binomial distribution
-        * ``'poisson'`` - Poisson distribution
+    n_input : int
+        Number of input proteins.
+    n_batch : int, optional
+        Number of batches, if 0, no batch correction is performed. Default is 0.
+    n_labels : int, optional
+        Number of labels. Default is 0.
+    n_hidden : int, optional
+        Number of nodes per hidden layer. Default is 128.
+    n_latent : int, optional
+        Dimensionality of the latent space. Default is 10.
+    n_layers : int, optional
+        Number of hidden layers used for encoder and decoder NNs. Default is 1.
+    n_continuous_cov : int, optional
+        Number of continuous covariates. Default is 0.
+    n_cats_per_cov : Optional[Iterable[int]], optional
+        Number of categories for each extra categorical covariate. Default is None.
+    dropout_rate : float, optional
+        Dropout rate for neural networks. Default is 0.1.
+    log_variational : bool, optional
+        Log(data+1) prior to encoding for numerical stability. Not normalization. Default is False.
+    protein_likelihood : Literal["normal", "beta"], optional
+        One of the following protein likelihood distributions:
         * ``'normal'`` - Normal distribution
-    latent_distribution
-        One of
+        * ``'beta'`` - Beta distribution
+        Default is "normal".
+    latent_distribution : Literal["normal", "ln"], optional
+        One of the following latent space distributions:
         * ``'normal'`` - Isotropic normal
         * ``'ln'`` - Logistic normal with normal params N(0, 1)
-    encode_covariates
-        Whether to concatenate covariates to expression in encoder
-    deeply_inject_covariates
+        Default is "normal".
+    encode_covariates : bool, optional
+        Whether to concatenate covariates to expression in encoder. Default is False.
+    deeply_inject_covariates : bool, optional
         Whether to concatenate covariates into output of hidden layers in encoder/decoder. This option
         only applies when `n_layers` > 1. The covariates are concatenated to the input of subsequent hidden layers.
-    use_batch_norm
-        Whether to use batch norm in layers.
-    use_layer_norm
-        Whether to use layer norm in layers.
-    use_size_factor_key
-        Use size_factor AnnDataField defined by the user as scaling factor in mean of conditional distribution.
-        Takes priority over `use_observed_lib_size`.
-    use_observed_lib_size
-        Use observed library size for RNA as scaling factor in mean of conditional distribution
-    library_log_means
-        1 x n_batch array of means of the log library sizes. Parameterizes prior on library size if
-        not using observed library size.
-    library_log_vars
-        1 x n_batch array of variances of the log library sizes. Parameterizes prior on library size if
-        not using observed library size.
-    var_activation
+        Default is True.
+    use_batch_norm : Literal["encoder", "decoder", "none", "both"], optional
+        Whether to use batch norm in layers. Default is "both".
+    use_layer_norm : Literal["encoder", "decoder", "none", "both"], optional
+        Whether to use layer norm in layers. Default is "none".
+    var_activation : Optional[Callable], optional
         Callable used to ensure positivity of the variational distributions' variance.
-        When `None`, defaults to `torch.exp`.
+        When `None`, defaults to `torch.exp`. Default is None.
+    encoder_marker_mask : Optional[list], optional
+        List of indices to select specific markers for the encoder. Default is None.
+    extra_encoder_kwargs : Optional[dict], optional
+        Extra keyword arguments for the encoder. Default is None.
+    extra_decoder_kwargs : Optional[dict], optional
+        Extra keyword arguments for the decoder. Default is None.
+    scale_activation : Optional[Literal["softplus", None]], optional
+        Activation function for scaling factors. Default is None.
+    prior_mixture : Optional[bool], optional
+        Whether to use a mixture of gaussian prior. Default is True.
+    prior_mixture_k : int, optional
+        Number of components in the mixture of gaussian prior. Default is 20.
+    prior_label_weight : Optional[int], optional
+        Weight for the prior label. Default is 10.
     """
-
     def __init__(
         self,
         n_input: int,
@@ -445,30 +448,49 @@ class DecoderCytoVI(nn.Module):
 
     Parameters
     ----------
-    n_input
+    n_input : int
         The dimensionality of the input (latent space)
-    n_output
+    n_output : int
         The dimensionality of the output (data space)
-    n_cat_list
-        A list containing the number of categories
-        for each category of interest. Each category will be
+    n_cat_list : Iterable[int], optional
+        A list containing the number of categories for each category of interest. Each category will be
         included using a one-hot encoding
-    n_layers
+    n_layers : int, optional
         The number of fully-connected hidden layers
-    n_hidden
+    n_hidden : int, optional
         The number of nodes per hidden layer
-    dropout_rate
-        Dropout rate to apply to each of the hidden layers
-    inject_covariates
-        Whether to inject covariates in each layer, or just the first (default).
-    use_batch_norm
+    inject_covariates : bool, optional
+        Whether to inject covariates in each layer, or just the first (default)
+    use_batch_norm : bool, optional
         Whether to use batch norm in layers
-    use_layer_norm
+    use_layer_norm : bool, optional
         Whether to use layer norm in layers
-    scale_activation
+    scale_activation : Literal["softplus", None], optional
         Activation layer to use for px_rate_decoder
-    """
+    protein_likelihood : Literal["normal", "beta"], optional
+        Likelihood function for protein expression
+    decoder_param_eps : float, optional
+        Small epsilon value added to the parameters for numerical stability
 
+    Attributes
+    ----------
+    px_decoder : FCLayers
+        Fully-connected layers for decoding the latent space
+    protein_likelihood : Literal["normal", "beta"]
+        Likelihood function for protein expression
+    decoder_param_eps : float
+        Small epsilon value added to the parameters for numerical stability
+    px_param1_decoder : nn.Module
+        Decoder module for the first parameter of the ZINB distribution
+    px_param2_decoder : nn.Module
+        Decoder module for the second parameter of the ZINB distribution
+
+    Methods
+    -------
+    forward(z, *cat_list)
+        Forward computation for a single sample
+
+    """
     def __init__(
         self,
         n_input: int,
@@ -515,30 +537,20 @@ class DecoderCytoVI(nn.Module):
     ):
         """The forward computation for a single sample.
 
-         #. Decodes the data from the latent space using the decoder network
-         #. Returns parameters for the ZINB distribution of expression
-         #. If ``dispersion != 'gene-cell'`` then value for that param will be ``None``
+        Decodes the data from the latent space using the decoder network.
+        Returns parameters for the Normal or Beta distribution of protein expression.
 
         Parameters
         ----------
-        dispersion
-            One of the following
-
-            * ``'gene'`` - dispersion parameter of NB is constant per gene across cells
-            * ``'gene-batch'`` - dispersion can differ between different batches
-            * ``'gene-label'`` - dispersion can differ between different labels
-            * ``'gene-cell'`` - dispersion can differ for every gene in every cell
-        z :
-            tensor with shape ``(n_input,)``
-        library_size
-            library size
-        cat_list
-            list of category membership(s) for this sample
+        z : torch.Tensor
+            Tensor with shape `(n_input,)`.
+        *cat_list : int
+            List of category membership(s) for this sample.
 
         Returns
         -------
-        4-tuple of :py:class:`torch.Tensor`
-            parameters for the ZINB distribution of expression
+        Tuple of torch.Tensor
+            Parameters for the Normal or Beta distribution of protein expression.
 
         """
         # The decoder returns values for the parameters of the emission distribution
