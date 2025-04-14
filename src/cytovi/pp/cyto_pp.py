@@ -98,6 +98,7 @@ def logp(
         warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
 
     adata.layers[transformed_layer_key] = adata.layers[raw_layer_key].copy()
+    adata.layers[transformed_layer_key] = adata.layers[transformed_layer_key].astype('float')
     adata.layers[transformed_layer_key] += offset
     adata.layers[transformed_layer_key] = np.log(adata.layers[transformed_layer_key])
 
