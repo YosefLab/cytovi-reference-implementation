@@ -59,8 +59,8 @@ def get_n_latent_heuristic(n_vars: int, latent_max: int = 20, latent_min: int = 
     return n_latent
 
 
-def clip_lfc_factory(min_lfc: float, max_lfc: float):
-    def clip_lfc(x, y):
+def clip_lfc_factory(min_lfc: float, max_lfc: float, pseudocount = 0):
+    def clip_lfc(x, y, pseudocount = pseudocount):
         x = np.clip(x, min_lfc, max_lfc)
         y = np.clip(y, min_lfc, max_lfc)
         return np.log2(x) - np.log2(y)

@@ -654,6 +654,7 @@ class CytoVI(
         idx1: Union[list[int], list[bool], str, None] = None,
         idx2: Union[list[int], list[bool], str, None] = None,
         mode: Literal["vanilla", "change"] = "change",
+        test_mode: Literal["two", "three"] = "two",
         delta: float = 0.25,
         batch_size: Optional[int] = None,
         all_stats: bool = False,
@@ -732,8 +733,10 @@ class CytoVI(
             if kwargs is None:
                 kwargs = {}
                 kwargs["change_fn"] = change_fn_clp
+                kwargs["test_mode"] = test_mode
             else:
                 kwargs["change_fn"] = change_fn_clp
+                kwargs["test_mode"] = test_mode
 
         result = _de_core(
             self.get_anndata_manager(adata, required=True),
