@@ -7,7 +7,7 @@ from anndata import AnnData
 from scvi import settings
 
 from cytovi._utils import apply_scaling, validate_layer_key, validate_marker, validate_obs_keys
-
+from cytovi._constants import CYTOVI_SCATTER_FEATS
 
 def arcsinh(
     adata: AnnData,
@@ -39,6 +39,11 @@ def arcsinh(
     if scaling_dict is not None:
         validate_marker(adata, scaling_dict.keys())
 
+    # check if the transformed layer is present already
+    if transformed_layer_key in adata.layers:
+        msg = f"Layer {transformed_layer_key} already exists. Overwriting it."
+        warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+
     # combine scaling factors into one dict
     global_dict = {marker: global_scaling_factor for marker in adata.var_names}
 
@@ -51,8 +56,7 @@ def arcsinh(
     adata.layers[transformed_layer_key] = np.arcsinh(transformed_layer)
 
     if not transform_scatter:
-        scatter_prefix = ("FSC", "Fsc", "fsc", "SSC", "Ssc", "ssc")  # turn this into a constant
-        is_scatter = [marker.startswith(scatter_prefix) for marker in adata.var_names]
+        is_scatter = [marker.startswith(CYTOVI_SCATTER_FEATS) for marker in adata.var_names]
 
         if any(is_scatter):
             scatter_str = ", ".join(adata.var_names[is_scatter])
@@ -87,13 +91,19 @@ def logp(
         Optional[AnnData]: If inplace is False, returns the normalized AnnData object. Otherwise, returns None.
     """
     validate_layer_key(adata, raw_layer_key)
+
+    # check if the transformed layer is present already
+    if transformed_layer_key in adata.layers:
+        msg = f"Layer {transformed_layer_key} already exists. Overwriting it."
+        warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+
     adata.layers[transformed_layer_key] = adata.layers[raw_layer_key].copy()
+    adata.layers[transformed_layer_key] = adata.layers[transformed_layer_key].astype('float')
     adata.layers[transformed_layer_key] += offset
     adata.layers[transformed_layer_key] = np.log(adata.layers[transformed_layer_key])
 
     if not transform_scatter:
-        scatter_prefix = ("FSC", "Fsc", "fsc", "SSC", "Ssc", "ssc")  # turn this into a constant
-        is_scatter = [marker.startswith(scatter_prefix) for marker in adata.var_names]
+        is_scatter = [marker.startswith(CYTOVI_SCATTER_FEATS) for marker in adata.var_names]
 
         if any(is_scatter):
             scatter_str = ", ".join(adata.var_names[is_scatter])
@@ -143,6 +153,12 @@ def scale(
         If inplace is False, returns the scaled AnnData object. Otherwise, returns None.
     """
     validate_layer_key(adata, transformed_layer_key)
+
+    # check if the scaled layer is present already
+    if scaled_layer_key in adata.layers:
+        msg = f"Layer {scaled_layer_key} already exists. Overwriting it."
+        warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+
     feature_range = (feature_range[0] + feat_eps, feature_range[1] - feat_eps)
 
     if batch_key:
@@ -162,9 +178,6 @@ def scale(
     else:
         scaled_data, scaler = apply_scaling(adata.layers[transformed_layer_key].copy(), method, feature_range)
         adata.layers[scaled_layer_key] = scaled_data
-
-    # scaler_params = {"feature_range": scaler.feature_range, "scale_": scaler.scale_, "min_": scaler.min_}
-    # adata.uns["scaler_params"] = scaler_params # this should be added to adata.uns but needs a fix with adata saving issues
 
     return adata if not inplace else None
 
@@ -191,6 +204,11 @@ def register_nan_layer(
     """
     validate_layer_key(adata, scaled_layer_key)
 
+    # check if the mask layer is present already
+    if mask_layer_key in adata.layers:
+        msg = f"Masking layer {mask_layer_key} already exists. Overwriting it."
+        warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+
     # add mask layer and replace nans by zero
     adata.layers[mask_layer_key] = np.ones_like(adata.layers[scaled_layer_key])
     adata.layers[mask_layer_key][np.isnan(adata.layers[scaled_layer_key])] = 0
@@ -202,7 +220,7 @@ def register_nan_layer(
 
 
 def merge_batches(
-    adata_list: list[AnnData], mask_layer_key: str = "_nan_mask", scaled_layer_key: str = "scaled", nan_layer_registration: bool = True,
+    adata_list: list[AnnData], mask_layer_key: str = "_nan_mask", batch_key = 'batch', scaled_layer_key: str = "scaled", nan_layer_registration: bool = True,
 ) -> AnnData:
     """
     Merge batches of AnnData objects and handle missing markers.
@@ -223,8 +241,13 @@ def merge_batches(
         if np.isnan(adata_batch.layers[scaled_layer_key]).any():
             error_msg = "Nan values are present in batch {}. This will interfere with downstream processing."
             raise ValueError(error_msg.format(batch))
-
-    adata = ad.concat(adata_list, join="outer", label="batch", fill_value=None)
+        
+        # check if batch key is already present in adata
+        if batch_key in adata_batch.obs:
+            msg = f"Batch key {batch_key} already exists in adata. Overwriting it."
+            warnings.warn(msg, UserWarning, stacklevel=settings.warnings_stacklevel)
+            
+    adata = ad.concat(adata_list, join="outer", label=batch_key, fill_value=None)
     all_markers = adata.var_names
 
     # register missing markers after merging

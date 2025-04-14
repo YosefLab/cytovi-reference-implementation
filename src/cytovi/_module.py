@@ -297,18 +297,11 @@ class CytoVAE(BaseModuleClass):
             prior_logits = self.prior_logits
 
             if self.n_labels > 1:
-                logits_labels = (
-                    torch.stack(
-                        [
-                            torch.nn.functional.one_hot(y_i, self.n_labels)
-                            if y_i < self.n_labels
-                            else torch.zeros(self.n_labels)
-                            for y_i in y.ravel()
-                        ]
-                    )
-                    .to(z.device)
-                    .float()
-                )
+                logits_labels = torch.where(
+                                y < self.n_labels,
+                                torch.nn.functional.one_hot(y.ravel(), num_classes=self.n_labels),
+                                torch.zeros(y.shape[0], self.n_labels, device=y.device),
+                            )
                 prior_logits = prior_logits + self.prior_label_weight * logits_labels
                 prior_means = prior_means.expand(y.shape[0], -1, -1)
                 prior_scales = prior_scales.expand(y.shape[0], -1, -1)
@@ -505,7 +498,6 @@ class DecoderCytoVI(nn.Module):
         self.protein_likelihood = protein_likelihood
         self.decoder_param_eps = decoder_param_eps
 
-        # param1 decoder activation, note: potentially remove this if you stick to beta dist
         if scale_activation == "softplus":
             self.px_param1_decoder = nn.Sequential(
                 nn.Linear(n_hidden, n_output),

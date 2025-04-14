@@ -35,9 +35,11 @@ from ._utils import (
     clip_lfc_factory,
     encode_categories,
     get_n_latent_heuristic,
-    impute_with_neighbors,
+    impute_cats_with_neighbors,
+    impute_expr_with_neighbors,
     validate_expression_range,
     validate_marker,
+    validate_layer_key,
     validate_obs_keys,
     validate_obsm_keys,
 )
@@ -204,6 +206,10 @@ class CytoVI(
             REGISTRY_KEYS.SAMPLE_KEY
             ).original_key
 
+        self.batch_key = self.adata_manager.get_state_registry(
+            REGISTRY_KEYS.BATCH_KEY
+            ).original_key
+
         self._model_summary_string = (  # noqa: UP032
 
             "CytoVI Model with the following params: \nn_hidden: {}, n_latent: {}, n_layers: {}, dropout_rate: "
@@ -309,11 +315,9 @@ class CytoVI(
         devices: Union[int, list[int], str] = "auto",
         train_size: float = 0.9,
         validation_size: Optional[float] = None,
-        shuffle_set_split: bool = True,
         batch_size: int = 128,
         early_stopping: bool = True,
         check_val_every_n_epoch: Optional[int] = None,
-        # reduce_lr_on_plateau: bool = True,
         n_steps_kl_warmup: Union[int, None] = None,
         n_epochs_kl_warmup: Union[int, None] = 400,
         adversarial_classifier: Optional[bool] = None,
@@ -370,18 +374,10 @@ class CytoVI(
         if adversarial_classifier is None:
             adversarial_classifier = self._use_adversarial_classifier
 
-        # n_steps_kl_warmup = (
-        #     n_steps_kl_warmup
-        #     if n_steps_kl_warmup is not None
-        #     else int(0.75 * self.adata.n_obs)
-        # )
-        # if reduce_lr_on_plateau:
-        #     check_val_every_n_epoch = 1
 
         update_dict = {
             "lr": lr,
             "adversarial_classifier": adversarial_classifier,
-            #     "reduce_lr_on_plateau": reduce_lr_on_plateau,
             "n_epochs_kl_warmup": n_epochs_kl_warmup,
             "n_steps_kl_warmup": n_steps_kl_warmup,
         }
@@ -396,7 +392,6 @@ class CytoVI(
             self.adata_manager,
             train_size=train_size,
             validation_size=validation_size,
-            # shuffle_set_split=shuffle_set_split,
             batch_size=batch_size,
         )
         training_plan = self._training_plan_cls(self.module, **plan_kwargs)
@@ -405,7 +400,6 @@ class CytoVI(
             training_plan=training_plan,
             data_splitter=data_splitter,
             max_epochs=max_epochs,
-            # use_gpu=use_gpu,
             accelerator=accelerator,
             devices=devices,
             early_stopping=early_stopping,
@@ -751,7 +745,7 @@ class CytoVI(
             idx1,
             idx2,
             all_stats,
-            scrna_raw_counts_properties,  # modify the extended stats summary and include the GMM
+            scrna_raw_counts_properties,
             col_names,
             mode,
             batchid1,
@@ -768,102 +762,108 @@ class CytoVI(
     def get_aggregated_posterior(
         self,
         adata: AnnData = None,
-        locs: np.ndarray = None,
-        scales: np.ndarray  = None,
         sample: Union [int, str] = None,
         indices: Sequence[int] = None,
         batch_size: int = None,
+        dof: float | None = 3.,
         ) -> dist.Distribution:
+        """Compute the aggregated posterior over the ``u`` latent representations.
+
+        Parameters
+        ----------
+        adata
+            AnnData object to use. Defaults to the AnnData object used to initialize the model.
+        sample
+            Name or index of the sample to filter on. If ``None``, uses all cells.
+        indices
+            Indices of cells to use.
+        batch_size
+            Batch size to use for computing the latent representation.
+        dof
+            Degrees of freedom for the Student's t-distribution components. If ``None``, components are Normal.
+
+        Returns
+        -------
+        A mixture distribution of the aggregated posterior.
+        """
         self._check_if_trained(warn=False)
+        adata = self._validate_anndata(adata)
 
-        if locs is not None and scales is not None:
-            qz_loc = torch.from_numpy(locs).T
-            qz_scale = torch.from_numpy(scales).T
+
+        if indices is None:
+            indices = np.arange(self.adata.n_obs)
+        if sample is not None:
+            indices = np.intersect1d(
+                np.array(indices), np.where(adata.obs[self.sample_key] == sample)[0]
+            )
+
+        dataloader = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
+        qu_loc, qu_scale = self.get_latent_representation(batch_size=batch_size, return_dist=True, dataloader=dataloader, give_mean=True)
+
+        qu_loc = torch.tensor(qu_loc, device=self.device).T
+        qu_scale = torch.tensor(qu_scale, device=self.device).T
+        
+        if dof is None:
+            components = dist.Normal(qu_loc, qu_scale)
         else:
-            adata = self._validate_anndata(adata)
-
-            if indices is None:
-                indices = np.arange(self.adata.n_obs)
-            if sample is not None:
-                indices = np.intersect1d(
-                    np.array(indices), np.where(adata.obs[self.sample_key] == sample)[0]
-                )
-
-            dataloader = self._make_data_loader(adata=adata, indices=indices, batch_size=batch_size)
-
-            qz_locs = []
-            qz_scales = []
-            for tensors in dataloader:
-                outputs = self.module.inference(self.module._get_inference_input(tensors))
-
-                qz_locs.append(outputs["qz"].loc)
-                qz_scales.append(outputs["qz"].scale)
-
-            # transpose because we need num cells to be rightmost dimension for mixture
-            qz_loc = torch.cat(qz_locs, 0).T
-            qz_scale = torch.cat(qz_scales, 0).T
-
+            components = dist.StudentT(dof, qu_loc, qu_scale)
         return dist.MixtureSameFamily(
-            dist.Categorical(torch.ones(qz_loc.shape[1])), dist.Normal(qz_loc, qz_scale)
-        )
+            dist.Categorical(logits=torch.ones(qu_loc.shape[1], device=qu_loc.device)), components)
 
     def differential_abundance(
         self,
-        adata: AnnData = None,
-        locs: np.ndarray = None,
-        scales: np.ndarray  = None,
-        sample_id: np.ndarray  = None,  # sample ids of each latent rep above.
-        sample_cov_keys: list[str] = None,
-        sample_subset: list[str] = None,
-        compute_log_enrichment: bool = False,
+        adata: AnnData | None = None,
         batch_size: int = 128,
+        downsample_cells: int | None = None,
+        dof: float | None = None,
     ) -> pd.DataFrame:
+        """Compute the differential abundance between samples.
+
+        Computes the logarithm of the ratio of the probabilities of each sample conditioned on the
+        estimated aggregate posterior distribution of each cell.
+
+        Parameters
+        ----------
+        adata
+            The data object to compute the differential abundance for.
+        batch_size
+            Minibatch size for computing the differential abundance.
+        downsample_cells
+            Number of cells to subset to before computing the differential abundance.
+        dof
+            Degrees of freedom for the Student's t-distribution components for aggregated posterior. If ``None``, components are Normal.
+
+        Returns
+        -------
+        DataFrame of shape (n_cells, n_samples) containing the log probabilities
+        for each cell across samples. The rows correspond to cell names from `adata.obs_names`,
+        and the columns correspond to unique sample identifiers.
+        """
         adata = self._validate_anndata(adata)
 
-        if locs is not None and scales is not None:  # if user passes in latent reps directly
-            us = locs
-            variances = scales
-            unique_samples = np.unique(sample_id)
-        else:
-            # return dist so that we can also get the vars, and don't have redundantly get the latent
-            # reps again in get_aggregated_posterior
-            us, variances = self.get_latent_representation(
-                adata, give_mean=True, batch_size=batch_size, return_dist=True
-            )
-
-            unique_samples = adata.obs[self.sample_key].unique()
-
+        zs = self.get_latent_representation(
+            batch_size=batch_size, return_dist=False, give_mean=True
+        )
+        
+        unique_samples = adata.obs[self.sample_key].unique()
+        dataloader = torch.utils.data.DataLoader(zs, batch_size=batch_size)
         log_probs = []
         for sample_name in tqdm(unique_samples):
-            if locs is not None and scales is not None:
-                indices = np.where(sample_id == sample_name)
-            else:
-                indices = np.where(adata.obs[self.sample_key] == sample_name)[0]
+            indices = np.where(adata.obs[self.sample_key] == sample_name)[0]
+            if downsample_cells is not None and downsample_cells < indices.shape[0]:
+                indices = np.random.choice(indices, downsample_cells, replace=False)
 
-            locs_per_sample = us[indices]
-            scales_per_sample = variances[indices]
-            ap = self.get_aggregated_posterior(self, locs=locs_per_sample, scales=scales_per_sample)
-
+            ap = self.get_aggregated_posterior(adata=adata, indices=indices, dof=dof)
             log_probs_ = []
-            n_splits = max(adata.n_obs // batch_size, 1)
-            for u_rep in np.array_split(us, n_splits):
-                log_probs_.append(ap.log_prob(torch.tensor(u_rep)).sum(-1, keepdims=True).cpu())
-
-            log_probs.append(np.concatenate(log_probs_, axis=0))
+            for z_rep in dataloader:
+                z_rep = z_rep.to(self.device)
+                log_probs_.append(ap.log_prob(z_rep).sum(-1, keepdims=True))
+            log_probs.append(torch.cat(log_probs_, axis=0).cpu().numpy())
 
         log_probs = np.concatenate(log_probs, 1)
-
-
-        if locs is not None and scales is not None:
-            indices = np.arange(locs.shape[0])
-        else:
-            indices = adata.obs_names.to_numpy()
-
-        columns = unique_samples
-
-        log_probs_df = pd.DataFrame(data=log_probs, index=indices, columns=columns)
-
+        log_probs_df = pd.DataFrame(data=log_probs, index=adata.obs_names.to_numpy(), columns=unique_samples)
         return log_probs_df
+
 
 
     def impute_categories_from_reference(
@@ -929,14 +929,122 @@ class CytoVI(
         rep_query = adata_query.obsm[use_rep]
 
         # Impute missing categories for the query data
-        imputed_query_cat_indices, uncertainty = impute_with_neighbors(
+        imputed_query_cat_indices, uncertainty = impute_cats_with_neighbors(
             rep_query, rep_ref, cat_encoded_ref, n_neighbors=n_neighbors, compute_uncertainty=return_uncertainty
         )
 
         # Convert imputed indices back to category labels
-        imputed_query_cat = ohe.inverse_transform(np.eye(n_cats)[imputed_query_cat_indices])
+        imputed_query_cat = ohe.inverse_transform(np.eye(n_cats)[imputed_query_cat_indices]).reshape(-1)
 
         if return_uncertainty:
             return imputed_query_cat, uncertainty
         else:
             return imputed_query_cat
+        
+
+
+    def impute_rna_from_reference(
+            self: AnnData,
+            reference_batch: str,
+            adata_rna: AnnData,
+            layer_key: str,
+            use_rep: Optional[str] = None,
+            n_neighbors: int = 20,
+            compute_uncertainty: bool = False,
+            return_query_only: bool = False,
+        ):
+            """
+            Impute expression data from missing modality for the query dataset based on a reference dataset using a shared representation.
+
+            Parameters
+            ----------
+            adata : AnnData
+                Annotated data matrix containing both reference and query data.
+            reference_batch : str
+                Identifier for the reference batch in `adata.obs['technology']`.
+            adata_to_impute : AnnData
+                Annotated data matrix containing the expression data to impute.
+            layer_key : str
+                Key in the `.layers` attribute of `adata_to_impute` for the reference expression data.
+            use_rep : str, optional
+                Key in the `.obsm` attribute to use as the representation space (e.g., latent space). 
+                If `None`, defaults to `X_CytoVI`.
+            n_neighbors : int, optional (default: 20)
+                Number of nearest neighbors to use for imputation.
+            compute_uncertainty : bool, optional (default: False)
+                If `True`, also computes the uncertainty of the imputation.
+            return_query_only : bool, optional (default: False)
+                If `True`, return only the imputed query dataset as an AnnData object.
+
+            Returns
+            -------
+            AnnData
+                Imputed AnnData object. If `return_query_only` is `True`, only the query dataset is returned.
+            If `return_uncertainty` is `True`, also returns the uncertainty matrix.
+            """
+            adata = self.adata
+            batch_key = self.batch_key
+
+            # validate input
+            validate_obsm_keys(adata, use_rep)
+            validate_layer_key(adata_rna, layer_key)
+
+            # retrieve reference and query indices
+            reference_indices = adata.obs_names[adata.obs[batch_key] == reference_batch]
+            query_indices = adata.obs_names[adata.obs[batch_key] != reference_batch]
+
+            # validate that query indices are in to impute adata
+            if not all(idx in adata_rna.obs_names for idx in reference_indices):
+                raise ValueError("Some query indices are not present in `adata_to_impute`.")
+
+            # get representations
+            if use_rep is None:
+                obsm_keys = adata.obsm.keys()
+
+                if CYTOVI_DEFAULT_REP in obsm_keys:
+                    use_rep = CYTOVI_DEFAULT_REP
+                else:
+                    adata.obsm[CYTOVI_DEFAULT_REP] = self.get_latent_representation()
+                    use_rep = CYTOVI_DEFAULT_REP
+
+            # Get representations and reference expression
+            rep_ref = adata[reference_indices,:].obsm[use_rep]
+            rep_query = adata[query_indices,:].obsm[use_rep]
+            expr_data_ref = adata_rna[reference_indices,:].layers[layer_key]
+
+            # Impute expression in query
+            imputed_expr_query, uncertainty = impute_expr_with_neighbors(
+                rep_query, rep_ref, expr_data_ref, n_neighbors=n_neighbors, compute_uncertainty=compute_uncertainty
+            )
+
+            # create anndata for imputed query dataset
+            adata_imputed_query = AnnData(
+                X = imputed_expr_query,
+                obs = adata[query_indices,:].obs,
+                obsm = adata[query_indices,:].obsm,
+                var = adata_rna.var,
+                layers={layer_key: imputed_expr_query},
+            )
+
+            if return_query_only:
+                return adata_imputed_query 
+
+            # assemble new anndata with imputed expression
+            expr_comb = np.concatenate([expr_data_ref, imputed_expr_query], axis=0)
+            obs_comb = adata.obs.loc[np.concatenate([reference_indices, query_indices]), :]
+
+            # restore original indices and add metadata
+            adata_combined = AnnData(
+                X = expr_comb, 
+                obs = obs_comb, 
+                var=adata_rna.var)
+        
+            adata_imputed = AnnData(
+                X=adata_combined[adata.obs_names].X,
+                obs=adata.obs,
+                var=adata_rna.var,
+                obsm=adata.obsm,
+                layers={layer_key: adata_combined[adata.obs_names].X},
+            )
+
+            return adata_imputed
