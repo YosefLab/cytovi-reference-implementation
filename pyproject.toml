@@ -20,6 +20,8 @@ urls.Source = "https://github.com/florianingelfinger/CytoVI"
 urls.Home-page = "https://github.com/florianingelfinger/CytoVI"
 dependencies = [
     "anndata",
+    "scvi-tools>=1.2",
+    "pynndescent",
     # for debug logging (referenced from the issue template)
     "session-info"
 ]
