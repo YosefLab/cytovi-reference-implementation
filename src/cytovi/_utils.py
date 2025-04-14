@@ -69,8 +69,7 @@ def clip_lfc_factory(min_lfc: float, max_lfc: float, pseudocount = 0):
 
 
 def validate_expression_range(data, min_exp, max_exp):
-    data_in_range = np.min(data) > min_exp and np.max(data) < max_exp
-    return data_in_range
+    return np.all((data >= min_exp) & (data <= max_exp))
 
 
 def encode_categories(adata, cat_key):
