@@ -1004,7 +1004,7 @@ class CytoVI(
                 if CYTOVI_DEFAULT_REP in obsm_keys:
                     use_rep = CYTOVI_DEFAULT_REP
                 else:
-                    pass
+                    pass # fix this part
                     adata.obsm[CYTOVI_DEFAULT_REP] = self.get_latent_representation()
                     use_rep = CYTOVI_DEFAULT_REP
 

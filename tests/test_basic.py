@@ -9,10 +9,12 @@ import numpy as np
 RAW_LAYER_KEY = 'raw'
 SCALED_LAYER_KEY = 'scaled'
 NAN_LAYER_KEY = '_nan_mask'
+RNA_LAYER_KEY = 'rna'
+LATENT_REP_KEY = 'X_CytoVI'
 BATCH_KEY = 'batch'
 LABELS_KEY = 'labels'
-N_EPOCHS = 2
 SAMPLE_KEY = 'sample_key'
+N_EPOCHS = 2
 
 @pytest.fixture(scope="session")
 def adata():
@@ -46,6 +48,9 @@ def overlapping_adatas():
     adata1.layers[RAW_LAYER_KEY] = adata1.X.copy()
     adata2.layers[RAW_LAYER_KEY] = adata2.X.copy()
 
+    adata1.obs_names = 'adata1_' + adata1.obs_names
+    adata2.obs_names = 'adata2_' + adata2.obs_names
+
     return adata1, adata2
 
 def test_cytovi_preprocess(adata, overlapping_adatas):
@@ -62,6 +67,10 @@ def test_cytovi_preprocess(adata, overlapping_adatas):
     cytovi.pp.scale(adata2)
     adata_merged = cytovi.pp.merge_batches([adata1, adata2])
     assert NAN_LAYER_KEY in adata_merged.layers
+
+def test_cytovi_plotting(adata):
+    cytovi.pl.biaxial(adata, layer_key=RAW_LAYER_KEY, marker_x=adata.var_names[0])
+    cytovi.pl.histogram(adata, layer_key=RAW_LAYER_KEY)
 
 
 def test_cytovi(adata):
@@ -89,6 +98,20 @@ def test_cytovi(adata):
     da_res = model.differential_abundance()
     assert da_res.shape == (adata.n_obs, adata.obs[SAMPLE_KEY].nunique())
 
+    model.differential_expression(groupby = SAMPLE_KEY)
+
+    # test label informed prior
+    cytovi.CytoVI.setup_anndata(adata,
+                                layer=SCALED_LAYER_KEY,
+                                batch_key=BATCH_KEY,
+                                sample_key=SAMPLE_KEY,
+                                labels_key=LABELS_KEY
+                                )
+    
+    model = cytovi.CytoVI(adata)
+    model.train(max_epochs= N_EPOCHS)
+
+
 
 
 def test_cytovi_overlapping(overlapping_adatas):
@@ -107,5 +130,21 @@ def test_cytovi_overlapping(overlapping_adatas):
     model = cytovi.CytoVI(adata_merged)
 
     model.train(max_epochs= N_EPOCHS)
-
     assert model.is_trained
+
+    imp_exp = model.get_normalized_expression()
+    assert imp_exp.shape == adata_merged.shape
+
+    # test label imputation
+    del adata1.obs[LABELS_KEY]
+
+    adata2.obsm[LATENT_REP_KEY] = np.random.randint(0, 1, (adata2.shape[0], model.module.n_latent))
+    model_query = cytovi.CytoVI.load_query_data(adata1, model)
+    model_query.is_trained = True
+    imp_cats = model_query.impute_categories_from_reference(adata2, cat_key = LABELS_KEY)
+    assert imp_cats.shape[0] == adata1.n_obs
+
+    # test RNA imputation
+    adata2.layers[RNA_LAYER_KEY] = np.random.randint(0, 100, size=adata2.shape)
+    adata_imp_rna = model.impute_rna_from_reference(reference_batch = '1', adata_rna = adata2, layer_key=RNA_LAYER_KEY)
+    assert adata_imp_rna.shape == (adata_merged.shape[0], adata2.n_vars)
