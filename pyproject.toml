@@ -7,7 +7,7 @@ name = "CytoVI"
 version = "0.0.1"
 description = "Variational inference for cytometry"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [
     {name = "Florian Ingelfinger"},
@@ -20,7 +20,9 @@ urls.Source = "https://github.com/florianingelfinger/CytoVI"
 urls.Home-page = "https://github.com/florianingelfinger/CytoVI"
 dependencies = [
     "anndata",
-    "scvi-tools>=1.2",
+    "scvi-tools>=1.3",
+    "seaborn",
+    "matplotlib",
     "pynndescent",
     # for debug logging (referenced from the issue template)
     "session-info"

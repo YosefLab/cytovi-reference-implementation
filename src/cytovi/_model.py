@@ -54,53 +54,57 @@ class CytoVI(
     UnsupervisedTrainingMixin,
     BaseModelClass,
 ):
-    """Adaptation of single-cell Variational Inference :cite:p:`Lopez18` for flow/mass cytometry data.
+    """Variational inference for cytometry (CytoVI).
 
     Parameters
     ----------
     adata
-        AnnData object that has been registered via :meth:`~scvi.model.SCVI.setup_anndata`.
+        AnnData object that has been registered via :meth:`~cytovi.CytoVI.setup_anndata`.
     n_hidden
         Number of nodes per hidden layer.
     n_latent
-        Dimensionality of the latent space.
+        Dimensionality of the latent space. If None, will be set using a heuristic based on number of input features.
     n_layers
         Number of hidden layers used for encoder and decoder NNs.
     dropout_rate
         Dropout rate for neural networks.
-    dispersion
-        One of the following:
-
-        * ``'gene'`` - dispersion parameter of NB is constant per gene across cells
-        * ``'gene-batch'`` - dispersion can differ between different batches
-        * ``'gene-label'`` - dispersion can differ between different labels
-        * ``'gene-cell'`` - dispersion can differ for every gene in every cell
     protein_likelihood
-        One of:
+        Likelihood function used for modeling protein expression. One of:
 
-        * ``'nb'`` - Negative binomial distribution
-        * ``'zinb'`` - Zero-inflated negative binomial distribution
-        * ``'poisson'`` - Poisson distribution
         * ``'normal'`` - Normal distribution
+        * ``'beta'`` - Beta distribution (requires expression in (0, 1))
+
     latent_distribution
-        One of:
+        Distribution of the latent space. One of:
 
         * ``'normal'`` - Normal distribution
         * ``'ln'`` - Logistic normal distribution (Normal(0, I) transformed by softmax)
+
+    encode_backbone_only
+        If True, only encode backbone markers (i.e., those present in all samples). This is required when analyzing overlapping panels with missing values.
+    encoder_marker_list
+        Optional list of markers to use for encoding. Must be a subset of backbone markers if `encode_backbone_only` is True.
+    prior_mixture
+        If True, uses a mixture of Gaussians as a prior in the latent space (MoG prior).
+    prior_mixture_k
+        Number of mixture components in the MoG prior. Defaults to `n_latent` if None.
     **model_kwargs
-        Keyword args for :class:`~scvi.module.VAE`
+        Keyword arguments passed to :class:`~cytovi.module.CytoVAE`.
 
     Examples
     --------
     >>> adata = anndata.read_h5ad(path_to_anndata)
-    >>> scvi.model.FlowVI.setup_anndata(adata, batch_key="batch")
-    >>> vae = scvi.model.FlowVI(adata)
-    >>> vae.train()
-    >>> adata.obsm["X_scVI"] = vae.get_latent_representation()
-    >>> adata.obsm["X_normalized_scVI"] = vae.get_normalized_expression()
+    >>> cytovi.CytoVI.setup_anndata(adata, batch_key="batch")
+    >>> model = cytovi.CytoVI(adata)
+    >>> model.train()
+    >>> adata.obsm["X_CytoVI"] = model.get_latent_representation()
+    >>> adata.layers["imputed"] = model.get_normalized_expression()
 
     Notes
     -----
+    When analyzing overlapping cytometry panels (i.e., samples with partially shared markers), CytoVI uses the shared "backbone" markers for encoding and reconstructs the full set. An adversarial classifier loss can be used to encourage batch-invariance in the latent space. 
+    If the data includes missing values, ensure that `nan_layer` is correctly registered using :meth:`~cytovi.CytoVI.setup_anndata`. This is handled automatically when using cytovi.pp.merge_batches().
+
     See further usage examples in the following tutorials:
 
     1. :doc:`/tutorials/notebooks/api_overview`
@@ -272,9 +276,10 @@ class CytoVI(
         %(param_layer)s
         %(param_batch_key)s
         %(param_labels_key)s
-        %(param_size_factor_key)s
+        %(param_sample_key)s
         %(param_cat_cov_keys)s
         %(param_cont_cov_keys)s
+        %(param_nan_layer)s
         """
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
@@ -308,106 +313,109 @@ class CytoVI(
 
     @devices_dsp.dedent
     def train(
-        self,
-        max_epochs: Optional[int] = 1000,
-        lr: float = 1e-3,
-        accelerator: str = "auto",
-        devices: Union[int, list[int], str] = "auto",
-        train_size: float = 0.9,
-        validation_size: Optional[float] = None,
-        batch_size: int = 128,
-        early_stopping: bool = True,
-        check_val_every_n_epoch: Optional[int] = None,
-        n_steps_kl_warmup: Union[int, None] = None,
-        n_epochs_kl_warmup: Union[int, None] = 400,
-        adversarial_classifier: Optional[bool] = None,
-        plan_kwargs: Optional[dict] = None,
-        early_stopping_patience: Optional[int] = 30,
-        **kwargs,
-    ):
-        """Trains the model using amortized variational inference.
-
-        Parameters
-        ----------
-        max_epochs
-            Number of passes through the dataset.
-        lr
-            Learning rate for optimization.
-        %(param_use_gpu)s
-        %(param_accelerator)s
-        %(param_devices)s
-        train_size
-            Size of training set in the range [0.0, 1.0].
-        validation_size
-            Size of the test set. If `None`, defaults to 1 - `train_size`. If
-            `train_size + validation_size < 1`, the remaining cells belong to a test set.
-        shuffle_set_split
-            Whether to shuffle indices before splitting. If `False`, the val, train, and test set are split in the
-            sequential order of the data according to `validation_size` and `train_size` percentages.
-        batch_size
-            Minibatch size to use during training.
-        early_stopping
-            Whether to perform early stopping with respect to the validation set.
-        check_val_every_n_epoch
-            Check val every n train epochs. By default, val is not checked, unless `early_stopping` is `True`
-            or `reduce_lr_on_plateau` is `True`. If either of the latter conditions are met, val is checked
-            every epoch.
-        reduce_lr_on_plateau
-            Reduce learning rate on plateau of validation metric (default is ELBO).
-        n_steps_kl_warmup
-            Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
-            Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
-            to `floor(0.75 * adata.n_obs)`.
-        n_epochs_kl_warmup
-            Number of epochs to scale weight on KL divergences from 0 to 1.
-            Overrides `n_steps_kl_warmup` when both are not `None`.
-        adversarial_classifier
-            Whether to use adversarial classifier in the latent space. This helps mixing when
-            there are missing proteins in any of the batches. Defaults to `True` is missing proteins
-            are detected.
-        plan_kwargs
-            Keyword args for :class:`~scvi.train.AdversarialTrainingPlan`. Keyword arguments passed to
-            `train()` will overwrite values present in `plan_kwargs`, when appropriate.
-        **kwargs
-            Other keyword args for :class:`~scvi.train.Trainer`.
-        """
-        if adversarial_classifier is None:
-            adversarial_classifier = self._use_adversarial_classifier
-
-
-        update_dict = {
-            "lr": lr,
-            "adversarial_classifier": adversarial_classifier,
-            "n_epochs_kl_warmup": n_epochs_kl_warmup,
-            "n_steps_kl_warmup": n_steps_kl_warmup,
-        }
-        if plan_kwargs is not None:
-            plan_kwargs.update(update_dict)
-        else:
-            plan_kwargs = update_dict
-
-        plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else {}
-
-        data_splitter = self._data_splitter_cls(
-            self.adata_manager,
-            train_size=train_size,
-            validation_size=validation_size,
-            batch_size=batch_size,
-        )
-        training_plan = self._training_plan_cls(self.module, **plan_kwargs)
-        runner = self._train_runner_cls(
             self,
-            training_plan=training_plan,
-            data_splitter=data_splitter,
-            max_epochs=max_epochs,
-            accelerator=accelerator,
-            devices=devices,
-            early_stopping=early_stopping,
-            check_val_every_n_epoch=check_val_every_n_epoch,
-            early_stopping_patience=early_stopping_patience,
+            max_epochs: Optional[int] = 1000,
+            lr: float = 1e-3,
+            accelerator: str = "auto",
+            devices: Union[int, list[int], str] = "auto",
+            train_size: float = 0.9,
+            validation_size: Optional[float] = None,
+            batch_size: int = 128,
+            early_stopping: bool = True,
+            check_val_every_n_epoch: Optional[int] = None,
+            n_steps_kl_warmup: Union[int, None] = None,
+            n_epochs_kl_warmup: Union[int, None] = 400,
+            adversarial_classifier: Optional[bool] = None,
+            plan_kwargs: Optional[dict] = None,
+            early_stopping_patience: Optional[int] = 30,
             **kwargs,
-        )
-        return runner()
+        ):
+            """
+            Trains the model using amortized variational inference.
+
+            Parameters
+            ----------
+            max_epochs : Optional[int], optional
+                Number of passes through the dataset, by default 1000.
+            lr : float, optional
+                Learning rate for optimization, by default 1e-3.
+            accelerator : str, optional
+                Accelerator to use for training, by default "auto".
+            devices : Union[int, list[int], str], optional
+                Devices to use for training, by default "auto".
+            train_size : float, optional
+                Size of the training set in the range [0.0, 1.0], by default 0.9.
+            validation_size : Optional[float], optional
+                Size of the test set. If `None`, defaults to 1 - `train_size`. If
+                `train_size + validation_size < 1`, the remaining cells belong to a test set.
+            batch_size : int, optional
+                Minibatch size to use during training, by default 128.
+            early_stopping : bool, optional
+                Whether to perform early stopping with respect to the validation set, by default True.
+            check_val_every_n_epoch : Optional[int], optional
+                Check validation set every n train epochs. By default, the validation set is not checked, unless `early_stopping` is `True`
+                or `reduce_lr_on_plateau` is `True`. If either of the latter conditions are met, the validation set is checked
+                every epoch.
+            n_steps_kl_warmup : Union[int, None], optional
+                Number of training steps (minibatches) to scale weight on KL divergences from 0 to 1.
+                Only activated when `n_epochs_kl_warmup` is set to None. If `None`, defaults
+                to `floor(0.75 * adata.n_obs)`.
+            n_epochs_kl_warmup : Union[int, None], optional
+                Number of epochs to scale weight on KL divergences from 0 to 1.
+                Overrides `n_steps_kl_warmup` when both are not `None`, by default 400.
+            adversarial_classifier : Optional[bool], optional
+                Whether to use an adversarial classifier in the latent space. This helps mixing when
+                there are missing proteins in any of the batches. Defaults to `True` if missing proteins
+                are detected.
+            plan_kwargs : Optional[dict], optional
+                Keyword arguments for the `AdversarialTrainingPlan` class. Keyword arguments passed to
+                `train()` will overwrite values present in `plan_kwargs`, when appropriate.
+            early_stopping_patience : Optional[int], optional
+                Number of epochs to wait before early stopping, by default 30.
+            **kwargs
+                Other keyword arguments for the `Trainer` class.
+
+            Returns
+            -------
+            runner : object
+                The runner object used for training.
+            """
+            if adversarial_classifier is None:
+                adversarial_classifier = self._use_adversarial_classifier
+
+            update_dict = {
+                "lr": lr,
+                "adversarial_classifier": adversarial_classifier,
+                "n_epochs_kl_warmup": n_epochs_kl_warmup,
+                "n_steps_kl_warmup": n_steps_kl_warmup,
+            }
+            if plan_kwargs is not None:
+                plan_kwargs.update(update_dict)
+            else:
+                plan_kwargs = update_dict
+
+            plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else {}
+
+            data_splitter = self._data_splitter_cls(
+                self.adata_manager,
+                train_size=train_size,
+                validation_size=validation_size,
+                batch_size=batch_size,
+            )
+            training_plan = self._training_plan_cls(self.module, **plan_kwargs)
+            runner = self._train_runner_cls(
+                self,
+                training_plan=training_plan,
+                data_splitter=data_splitter,
+                max_epochs=max_epochs,
+                accelerator=accelerator,
+                devices=devices,
+                early_stopping=early_stopping,
+                check_val_every_n_epoch=check_val_every_n_epoch,
+                early_stopping_patience=early_stopping_patience,
+                **kwargs,
+            )
+            return runner()
 
     @torch.inference_mode()
     def posterior_predictive_sample(
@@ -417,8 +425,9 @@ class CytoVI(
         n_samples: int = 1,
         protein_list: Optional[Sequence[str]] = None,
         batch_size: Optional[int] = None,
-    ) -> np.ndarray:
-        r"""Generate observation samples from the posterior predictive distribution.
+    ):
+        """
+        Generate observation samples from the posterior predictive distribution.
 
         The posterior predictive distribution is written as :math:`p(\hat{x} \mid x)`.
 
@@ -431,15 +440,15 @@ class CytoVI(
             Indices of cells in adata to use. If `None`, all cells are used.
         n_samples
             Number of samples for each cell.
-        gene_list
-            Names of genes of interest.
+        protein_list
+            Names of proteins of interest.
         batch_size
             Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
 
         Returns
         -------
         x_new : :py:class:`torch.Tensor`
-            tensor with shape (n_cells, n_genes, n_samples)
+            Tensor with shape (n_cells, n_proteins, n_samples)
         """
         if self.module.protein_likelihood not in ["beta", "normal"]:
             raise ValueError("Invalid protein_likelihood.")
@@ -487,53 +496,54 @@ class CytoVI(
         nan_warning: Optional[bool] = True,
         **importance_weighting_kwargs,
     ) -> Union[np.ndarray, pd.DataFrame]:
-        r"""Returns the normalized (decoded) protein expression.
+        """
+        Returns the normalized (decoded) protein expression.
 
-        This is denoted as :math:`\rho_n` in the scVI paper.
+        The model's reconstructed (normalized) expression is written as :math:\hat{x} = p(x \mid z).
 
         Parameters
         ----------
-        adata
+        adata : Optional[AnnData], optional
             AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the
             AnnData object used to initialize the model.
-        indices
+        indices : Optional[Sequence[int]], optional
             Indices of cells in adata to use. If `None`, all cells are used.
-        transform_batch
+        transform_batch : Optional[Sequence[Union[Number, str]]], optional
             Batch to condition on.
             If transform_batch is:
-
             - 'all', then the mean across batches is used
             - None, then real observed batch is used.
             - int, then batch transform_batch is used.
             This behaviour affects only proteins that are detected across multiple batches.
             Unobserved proteins are decoded in the batch(es), in which they were measured.
-        protein_list
+        protein_list : Optional[Sequence[str]], optional
             Return frequencies of expression for a subset of protein.
             This can save memory when working with large datasets and few proteins are
             of interest.
-        library_size
-            Scale the expression frequencies to a common library size.
-            This allows gene expression levels to be interpreted on a common scale of relevant
-            magnitude. If set to `"latent"`, use the latent library size.
-        n_samples
+        n_samples : int, optional
             Number of posterior samples to use for estimation.
-        n_samples_overall
+        n_samples_overall : int, optional
             Number of posterior samples to use for estimation. Overrides `n_samples`.
-        weights
+        weights : Union[Literal["uniform", "importance"], None], optional
             Weights to use for sampling. If `None`, defaults to `"uniform"`.
-        batch_size
+        batch_size : Optional[int], optional
             Minibatch size for data loading into model. Defaults to `scvi.settings.batch_size`.
-        return_mean
+        return_mean : bool, optional
             Whether to return the mean of the samples.
-        return_numpy
+        return_numpy : Optional[bool], optional
             Return a :class:`~numpy.ndarray` instead of a :class:`~pandas.DataFrame`. DataFrame includes
             gene names as columns. If either `n_samples=1` or `return_mean=True`, defaults to `False`.
             Otherwise, it defaults to `True`.
+        nan_warning : Optional[bool], optional
+            Whether to show a warning if missing proteins are detected between batches.
+        **importance_weighting_kwargs : dict
+            Additional keyword arguments for importance weighting.
 
         Returns
         -------
-        If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
-        Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
+        Union[np.ndarray, pd.DataFrame]
+            If `n_samples` > 1 and `return_mean` is False, then the shape is `(samples, cells, genes)`.
+            Otherwise, shape is `(cells, genes)`. In this case, return type is :class:`~pandas.DataFrame` unless `return_numpy` is True.
         """
         adata = self._validate_anndata(adata)
         all_batches = list(np.unique(self.adata_manager.get_from_registry("batch")))
@@ -654,6 +664,7 @@ class CytoVI(
         idx1: Union[list[int], list[bool], str, None] = None,
         idx2: Union[list[int], list[bool], str, None] = None,
         mode: Literal["vanilla", "change"] = "change",
+        test_mode: Literal["two", "three"] = "two",
         delta: float = 0.25,
         batch_size: Optional[int] = None,
         all_stats: bool = False,
@@ -675,33 +686,55 @@ class CytoVI(
 
         Parameters
         ----------
-        %(de_adata)s
-        %(de_groupby)s
-        %(de_group1)s
-        %(de_group2)s
-        %(de_idx1)s
-        %(de_idx2)s
-        %(de_mode)s
-        %(de_delta)s
-        %(de_batch_size)s
-        %(de_all_stats)s
-        %(de_batch_correction)s
-        %(de_batchid1)s
-        %(de_batchid2)s
-        %(de_fdr_target)s
-        %(de_silent)s
-        weights
-            Weights to use for sampling. If `None`, defaults to `"uniform"`.
-        filter_outlier_cells
-            Whether to filter outlier cells with :meth:`~scvi.model.base.DifferentialComputation.filter_outlier_cells`.
-        importance_weighting_kwargs
-            Keyword arguments passed into :meth:`~scvi.model.base.RNASeqMixin._get_importance_weights`.
+        adata : Optional[AnnData], optional
+            Annotated data matrix, by default None
+        groupby : Optional[str], optional
+            Key in `adata.obs` containing the groups, by default None
+        group1 : Optional[list[str]], optional
+            List of group names for group 1, by default None
+        group2 : Optional[list[str]], optional
+            List of group names for group 2, by default None
+        idx1 : Union[list[int], list[bool], str, None], optional
+            Indices or boolean mask for group 1, by default None
+        idx2 : Union[list[int], list[bool], str, None], optional
+            Indices or boolean mask for group 2, by default None
+        mode : Literal["vanilla", "change"], optional
+            Differential expression mode, by default "change"
+        test_mode : Literal["two", "three"], optional
+            Test mode for differential expression, by default "two"
+        delta : float, optional
+            Minimum fold change for differential expression, by default 0.25
+        batch_size : Optional[int], optional
+            Batch size for computation, by default None
+        all_stats : bool, optional
+            Whether to compute all statistics, by default False
+        batch_correction : bool, optional
+            Whether to perform batch correction, by default False
+        batchid1 : Optional[list[str]], optional
+            List of batch IDs for group 1, by default None
+        batchid2 : Optional[list[str]], optional
+            List of batch IDs for group 2, by default None
+        fdr_target : float, optional
+            Target false discovery rate, by default 0.05
+        silent : bool, optional
+            Whether to suppress progress bar and messages, by default False
+        weights : Union[Literal["uniform", "importance"], None], optional
+            Weights to use for sampling, by default "uniform"
+        filter_outlier_cells : bool, optional
+            Whether to filter outlier cells, by default False
+        lfc_clipping : bool, optional
+            Whether to clip log fold change values, by default True
+        clipping_range : tuple, optional
+            Range for clipping log fold change values, by default (0, 1)
+        importance_weighting_kwargs : Union[dict, None], optional
+            Keyword arguments for importance weighting, by default None
         **kwargs
-            Keyword args for :meth:`scvi.model.base.DifferentialComputation.get_bayes_factors`
+            Additional keyword arguments for differential expression computation
 
         Returns
         -------
-        Differential expression DataFrame.
+        pd.DataFrame
+            Differential expression DataFrame.
         """
         adata = self._validate_anndata(adata)
         col_names = adata.var_names
@@ -732,8 +765,10 @@ class CytoVI(
             if kwargs is None:
                 kwargs = {}
                 kwargs["change_fn"] = change_fn_clp
+                kwargs["test_mode"] = test_mode
             else:
                 kwargs["change_fn"] = change_fn_clp
+                kwargs["test_mode"] = test_mode
 
         result = _de_core(
             self.get_anndata_manager(adata, required=True),
@@ -887,6 +922,8 @@ class CytoVI(
             The key in the `.obsm` attribute to use as the representation space (e.g., latent space). If `None`, the function will attempt to use a default latent representation X_CytoVI.
         n_neighbors : int, optional (default: 20)
             The number of nearest neighbors to use for imputation. The imputation is based on similarity in the chosen representation space.
+        return_uncertainty : bool, optional (default: False)
+            If `True`, the function will also return the uncertainty of the imputation.
 
         Returns
         -------
@@ -958,14 +995,12 @@ class CytoVI(
 
             Parameters
             ----------
-            adata : AnnData
-                Annotated data matrix containing both reference and query data.
             reference_batch : str
                 Identifier for the reference batch in `adata.obs['technology']`.
-            adata_to_impute : AnnData
+            adata_rna : AnnData
                 Annotated data matrix containing the expression data to impute.
             layer_key : str
-                Key in the `.layers` attribute of `adata_to_impute` for the reference expression data.
+                Key in the `.layers` attribute of `adata_rna` for the reference expression data.
             use_rep : str, optional
                 Key in the `.obsm` attribute to use as the representation space (e.g., latent space). 
                 If `None`, defaults to `X_CytoVI`.
@@ -980,7 +1015,7 @@ class CytoVI(
             -------
             AnnData
                 Imputed AnnData object. If `return_query_only` is `True`, only the query dataset is returned.
-            If `return_uncertainty` is `True`, also returns the uncertainty matrix.
+                If `return_uncertainty` is `True`, also returns the uncertainty matrix.
             """
             adata = self.adata
             batch_key = self.batch_key
