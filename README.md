@@ -7,17 +7,25 @@
 [link-tests]: https://github.com/florianingelfinger/CytoVI/actions/workflows/test.yml
 [badge-docs]: https://img.shields.io/readthedocs/CytoVI
 
-Variational inference for cytometry
+Variational inference for antibody-based single cell technologies. 
+
+CytoVI accomplishes the following analysis tasks:
+
+-   Integration/batch correction
+-   Differential protein expression analysis
+-   Label-free differential abundance analysis
+-   Imputation of unseen proteins from overlapping antibody panels
+-   Technology integration (e.g. Flow and Mass cytometry)
+-   RNA/modality imputation after integration of flow/mass cytometry data with CITE-seq data
+-   Automated cell annotation via transfer learning
 
 ## Getting started
 
-Please refer to the [documentation][link-docs]. In particular, the
-
--   [API documentation][link-api].
+To get started please check out the basic analysis notebook in the [docs](https://github.com/florianingelfinger/CytoVI/blob/main/docs/notebooks/Basic_CytoVI_workflow.ipynb).
 
 ## Installation
 
-You need to have Python 3.9 or newer installed on your system. If you don't have
+You need to have Python 3.10 or newer installed on your system. If you don't have
 Python installed, we recommend installing [Mambaforge](https://github.com/conda-forge/miniforge#mambaforge).
 
 There are several alternative options to install CytoVI:
