@@ -1,7 +1,7 @@
 {
   "template": "https://github.com/scverse/cookiecutter-scverse",
-  "commit": "8e96abb5c3e2d5078c44713958da672711cf2a48",
-  "checkout": null,
+  "commit": "d383d94fadff9e4e6fdb59d77c68cb900d7cedec",
+  "checkout": "v0.6.0",
   "context": {
     "cookiecutter": {
       "project_name": "CytoVI",
@@ -10,18 +10,33 @@
       "author_full_name": "Florian Ingelfinger",
       "author_email": "florian.ingelfinger@weizmann.ac.il",
       "github_user": "florianingelfinger",
-      "project_repo": "https://github.com/florianingelfinger/CytoVI",
+      "github_repo": "CytoVI",
       "license": "MIT License",
+      "ide_integration": true,
       "_copy_without_render": [
-        ".github/workflows/**.yaml",
+        ".github/workflows/build.yaml",
+        ".github/workflows/test.yaml",
         "docs/_templates/autosummary/**.rst"
+      ],
+      "_exclude_on_template_update": [
+        "CHANGELOG.md",
+        "LICENSE",
+        "README.md",
+        "docs/api.md",
+        "docs/index.md",
+        "docs/notebooks/example.ipynb",
+        "docs/references.bib",
+        "docs/references.md",
+        "src/**",
+        "tests/**"
       ],
       "_render_devdocs": false,
       "_jinja2_env_vars": {
         "lstrip_blocks": true,
         "trim_blocks": true
       },
-      "_template": "https://github.com/scverse/cookiecutter-scverse"
+      "_template": "https://github.com/scverse/cookiecutter-scverse",
+      "_commit": "d383d94fadff9e4e6fdb59d77c68cb900d7cedec"
     }
   },
   "directory": null
